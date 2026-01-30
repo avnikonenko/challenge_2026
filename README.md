@@ -26,7 +26,7 @@ Metrics summary aggregation runs by default; skip with `--skip-metrics-summary`.
 ## Individual Steps
 - Featurize (Morgan + 2D): `python featurize.py --config config.json`
 - Similarity rank vs actives: `python similarity_rank.py --config config.json`
-- Train + predict (scaffold CV on Morgan only, calibrated RF/XGB/LGBM/HGB with full-data retrain): `python train_models.py --config config.json`
+- Train + predict (scaffold CV on Morgan only by default, calibrated RF/XGB/LGBM/HGB with full-data retrain): `python train_models.py --config config.json`
 - You can skip specific tree models to save time: add any of `--skip-rf --skip-xgb --skip-lgbm --skip-hgb` (at least one model must remain).
 - Chemprop D-MPNN ensemble (with Morgan bits, full-data ensemble seeds; default ensemble=5 for time budget): `python chemprop_runner.py --config config.json`
 - Keras dense baseline on Morgan bits (split for metrics, full-data retrain for scoring): `python nn_keras.py --config config.json`
@@ -39,6 +39,7 @@ Metrics summary aggregation runs by default; skip with `--skip-metrics-summary`.
 - Conda env setup: `mamba env create -f environment.yml && conda activate vscreen`
 - Recompute consensus on selected prediction files:  
   `python consensus_select.py --rank_files outputs/predictions/rf_morgan_blind_ranked.csv outputs/predictions/chemprop_blind_ranked.csv --metrics_dir outputs/metrics --output_dir outputs/consensus_custom`
+- To include descriptors alongside Morgan in tree models: edit `train_models.py` and set `feature_sets = ["morgan", "descriptors"]`, then rerun `train_models.py` (featurize already writes both).
 - Split choice (Stage 1): `python choose_split_mode.py --train_csv TRAIN.csv --blind_csv BLIND.csv --out_json split_mode.json --smiles_col smiles`
 - Stage 2 runner enforcing the chosen split:  
   `python run_pipeline.py --train_csv TRAIN.csv --blind_csv BLIND.csv --split_mode_json split_mode.json [--chemprop] [--keras]`
