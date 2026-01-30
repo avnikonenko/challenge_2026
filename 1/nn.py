@@ -10,8 +10,8 @@ import pandas as pd
 # f_train = '/home/sany/projects/rf/MorganFprRDKit_train_0.csv'
 # f_test = '/home/sany/projects/rf/MorganFprRDKit_blind.csv'
 
-f_train = '/media/sany/Workplace/projects/2023_challenge/MorganFprRDKit_train_protonated_0.csv'
-f_test = '/media/sany/Workplace/projects/2023_challenge/MorganFprRDKit_blind_protonated_0.csv'
+f_train = '/mnt/CCC417ABC4179734/Ivanova/challenge_2026/1/MorganFprRDKit_chembl_stereo_classes_fixed_0.csv'
+f_test = '/mnt/CCC417ABC4179734/Ivanova/challenge_2026/1/MorganFprRDKit_blind_stereo_0.csv'
 
 data_train = pd.read_csv(f_train)
 x_train = data_train.drop(['mol_id', 'act'], axis='columns')
@@ -65,7 +65,7 @@ mol_y = data_test.loc[:,['mol_id','act']]
 mol_y = mol_y.sort_values('act',ascending=False)
 #
 mol_pred = mol_y.iloc[0:100,0]
-mol_pred.to_csv('/media/sany/Workplace/projects/2023_challenge/correct_answers_NP.txt',index=False)
+mol_pred.to_csv('correct_answers_NP.txt',index=False)
 # mol_test = pd.read_csv('/media/sany/Workplace/projects/2023_challenge/correct_answers_NP.txt')['mol_id'].to_list()
 # correct_all = len(mol_test)
 #

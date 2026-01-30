@@ -22,6 +22,29 @@ def ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
 
 
+def infer_sep(path: str) -> str:
+    if path.endswith(".tsv"):
+        return "\t"
+    return ","
+
+
+def normalize_activity(series: pd.Series) -> pd.Series:
+    """
+    Normalize activity labels to strings "active"/"inactive".
+    Accepts numeric/bool or string representations (1/0, true/false, active/inactive).
+    Unknown values are lowercased/stripped and passed through.
+    """
+    def _norm(v):
+        s = str(v).strip().lower()
+        if s in {"1", "true", "active"}:
+            return "active"
+        if s in {"0", "false", "inactive"}:
+            return "inactive"
+        return s
+
+    return series.apply(_norm)
+
+
 def seed_everything(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)

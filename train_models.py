@@ -32,6 +32,8 @@ from chem_utils import (
     load_config,
     precision_at_k,
     seed_everything,
+    normalize_activity,
+    scaffold_split_indices,
 )
 from split_choice import load_split_mode, make_split_indices
 
@@ -66,6 +68,11 @@ def load_feature_set(
         right_on=[name_col, smiles_col],
         how="left",
     )
+    if merged["__order"].isna().any() or len(merged) != len(known_df):
+        missing = merged[merged["__order"].isna()][["name", "smiles"]]
+        raise ValueError(
+            f"Feature alignment failed: {missing.shape[0]} rows could not be matched by name+smiles."
+        )
     merged = merged.sort_values("__order").reset_index(drop=True)
 
     feat_cols = [c for c in merged.columns if c not in {"label", "smiles", "name", name_col, smiles_col, "__order"}]
@@ -212,6 +219,18 @@ def train_with_split(
     return metrics, blind_probs, calibrated
 
 
+def fit_full_model(base_model, X: np.ndarray, y: np.ndarray, blind_X: np.ndarray):
+    """
+    Retrain on all labeled data to score the blind set.
+    """
+    calibrate_method = "isotonic" if len(y) >= 200 else "sigmoid"
+    estimator = clone(base_model)
+    calibrated = CalibratedClassifierCV(estimator, method=calibrate_method, cv=3, n_jobs=-1)
+    calibrated.fit(X, y)
+    blind_probs = calibrated.predict_proba(blind_X)[:, 1]
+    return blind_probs, calibrated
+
+
 def aggregate_cv_metrics(per_fold_metrics: List[Dict[str, float]]) -> Dict[str, float]:
     metrics = {}
     for key in per_fold_metrics[0].keys():
@@ -250,13 +269,20 @@ def main(config_path: str) -> None:
     # load original known data for ordering
     known_path = cfg["known_path"]
     smiles_col = cfg.get("smiles_col", "smiles")
-    status_col = cfg.get("status_col", "status")
+    status_col = cfg.get("status_col", "act")
     name_col = cfg.get("name_col", "name")
-    sep = "\t" if known_path.endswith(".tsv") else ","
-    known_df = pd.read_csv(known_path, sep=sep)
-    known_df[status_col] = known_df[status_col].str.lower().str.strip()
+    if known_path.endswith(".smi"):
+        known_df = pd.read_csv(known_path, sep="\t", header=None, names=[smiles_col, name_col, status_col])
+    else:
+        sep = "\t" if known_path.endswith(".tsv") else ","
+        known_df = pd.read_csv(known_path, sep=sep)
+    known_df[status_col] = normalize_activity(known_df[status_col])
     known_df[name_col] = known_df[name_col] if name_col in known_df.columns else known_df.index.astype(str)
     known_df["act"] = (known_df[status_col] == "active").astype(int)
+
+    n_folds = int(cfg.get("cv_folds", 5))
+    if n_folds < 2:
+        n_folds = 1
 
     for feat_kind in feature_sets:
         X, y, meta, feat_cols, blind_X, blind_meta = load_feature_set(
@@ -264,29 +290,33 @@ def main(config_path: str) -> None:
         )
         smiles = meta["smiles"].tolist()
 
-        if split_mode:
-            train_idx, val_idx = make_split_indices(known_df, split_mode["chosen_strategy"], split_mode["config_used"], seed)
-        else:
-            # fallback to random stratified
-            train_idx, val_idx = np.arange(len(y)), np.array([], dtype=int)
-            from sklearn.model_selection import train_test_split
-
-            train_idx, val_idx = train_test_split(np.arange(len(y)), test_size=0.2, random_state=seed, stratify=y)
+        # Scaffold-based CV splits (deterministic)
+        splits = scaffold_split_indices(smiles, n_folds=n_folds, seed=seed)
+        if not splits:
+            splits = [(np.arange(len(y)), np.array([], dtype=int))]
 
         for model_tag, base_model in build_models(seed):
             tag = f"{model_tag}_{feat_kind}"
-            print(f"Training {tag} using split strategy: {split_mode['chosen_strategy'] if split_mode else 'random_stratified'}")
-            metrics, blind_probs, fitted_model = train_with_split(
-                base_model,
-                X,
-                y,
-                train_idx,
-                val_idx,
-                eval_topk,
-                bedroc_alpha,
-                blind_X,
-            )
-            metrics["split_strategy"] = split_mode["chosen_strategy"] if split_mode else "random_stratified"
+            print(f"Training {tag} with scaffold CV ({len(splits)} folds)")
+
+            per_fold_metrics: List[Dict[str, float]] = []
+            for fold_id, (train_idx, val_idx) in enumerate(splits):
+                metrics_fold, _, fitted_model = train_with_split(
+                    base_model,
+                    X,
+                    y,
+                    train_idx,
+                    val_idx,
+                    eval_topk,
+                    bedroc_alpha,
+                    blind_X,
+                )
+                metrics_fold["fold"] = fold_id
+                per_fold_metrics.append(metrics_fold)
+
+            metrics = aggregate_cv_metrics(per_fold_metrics)
+            metrics["split_strategy"] = "scaffold_cv"
+            metrics["cv_folds"] = len(splits)
 
             # Save metrics
             metrics_path = os.path.join(metrics_dir, f"{tag}_cv.json")
@@ -294,7 +324,9 @@ def main(config_path: str) -> None:
 
             # Save ranked predictions
             pred_df = blind_meta.copy()
-            pred_df["score"] = blind_probs
+            # Retrain on full data for final scoring
+            full_blind_probs, full_model = fit_full_model(base_model, X, y, blind_X)
+            pred_df["score"] = full_blind_probs
             pred_df = pred_df.sort_values(by="score", ascending=False).reset_index(drop=True)
             pred_df.insert(0, "rank", pred_df.index + 1)
             pred_path = os.path.join(pred_dir, f"{tag}_blind_ranked.csv")
@@ -302,7 +334,15 @@ def main(config_path: str) -> None:
 
             # Persist calibrated model
             model_path = os.path.join(model_dir, f"{tag}.pkl")
-            joblib.dump({"model": fitted_model, "features": feat_cols, "fingerprint_config": feat_cfg.__dict__}, model_path)
+            joblib.dump(
+                {
+                    "model": full_model,
+                    "features": feat_cols,
+                    "fingerprint_config": feat_cfg.__dict__,
+                    "split_trained_model": fitted_model,
+                },
+                model_path,
+            )
 
             print(f"Finished {tag}: metrics -> {metrics_path}, predictions -> {pred_path}, model -> {model_path}")
 

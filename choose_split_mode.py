@@ -7,6 +7,7 @@ import argparse
 import pandas as pd
 
 from split_choice import choose_split_strategy, save_split_mode
+from split_choice import build_fps_from_smiles, max_similarity
 
 
 def main():
@@ -21,8 +22,16 @@ def main():
     parser.add_argument("--random_state_base", type=int, default=42)
     args = parser.parse_args()
 
-    train_df = pd.read_csv(args.train_csv)
-    blind_df = pd.read_csv(args.blind_csv)
+    if args.train_csv.endswith(".smi"):
+        # Headerless .smi expected as: smi, mol_id, class
+        train_df = pd.read_csv(args.train_csv, sep="\t", header=None, names=[args.smiles_col, "mol_id", args.y_col])
+    else:
+        train_df = pd.read_csv(args.train_csv)
+
+    if args.blind_csv.endswith(".smi"):
+        blind_df = pd.read_csv(args.blind_csv, sep="\t", header=None, names=[args.smiles_col, "mol_id"])
+    else:
+        blind_df = pd.read_csv(args.blind_csv)
 
     config = {
         "smiles_col": args.smiles_col,
@@ -37,6 +46,10 @@ def main():
 
     chosen, report = choose_split_strategy(train_df, blind_df, config)
 
+    # Secondary evaluation with cluster_group_t0.60 for robustness (kept alongside primary)
+    secondary_strategy = "cluster_group_t0.60"
+    report["secondary_strategy"] = secondary_strategy
+
     # Print diagnostics
     t2b = report["train_to_blind"]
     print("Train→Blind similarity summary:")
@@ -48,6 +61,29 @@ def main():
         print(f" {name}\t{stats['mean_ks']:.3f}\t{stats['std_ks']:.3f}\t{stats['valid_repeats']}\t{stats['avg_val_actives']:.1f}")
     print(f"\nChosen: {chosen}")
     print(f"Rationale: {report['rationale']}")
+
+    # Additional diagnostics: blind cluster structure and leakage stats on chosen split
+    try:
+        # Blind cluster stats using same radius/bits
+        blind_fps = build_fps_from_smiles(blind_df[args.smiles_col].tolist(), radius=config["radius"], n_bits=config["n_bits"])
+        # simple unique count proxy
+        report["blind_unique_fps"] = int(len([fp for fp in blind_fps if fp is not None]))
+    except Exception:
+        report["blind_unique_fps"] = None
+
+    # Split leakage stats: similarity of val to train for chosen split
+    from split_choice import make_split_indices
+
+    train_idx, val_idx = make_split_indices(train_df, chosen, config, args.random_state_base)
+    train_fps = build_fps_from_smiles(train_df[args.smiles_col].tolist(), radius=config["radius"], n_bits=config["n_bits"])
+    val_fps = [train_fps[i] for i in val_idx]
+    train_core = [train_fps[i] for i in train_idx]
+    s_val = max_similarity(val_fps, train_core)
+    report["leakage_val_to_train"] = {
+        "q10": float(np.quantile(s_val, 0.10)) if len(s_val) else 0.0,
+        "q50": float(np.quantile(s_val, 0.50)) if len(s_val) else 0.0,
+        "q90": float(np.quantile(s_val, 0.90)) if len(s_val) else 0.0,
+    }
 
     save_split_mode(args.out_json, chosen, report, config)
     print(f"Saved split mode -> {args.out_json}")

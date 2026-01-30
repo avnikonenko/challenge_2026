@@ -92,7 +92,8 @@ def _cluster_groups(train_fps: List[Optional[DataStructs.ExplicitBitVect]], cuto
     for i in range(1, n):
         sims = DataStructs.BulkTanimotoSimilarity(fps[i], fps[:i])
         dists.extend([1.0 - s for s in sims])
-    clusters = Butina.ClusterData(dists, nPts=n, cutoff=cutoff, isDistData=True)
+    # RDKit Butina.ClusterData expects argument name distThresh (not cutoff).
+    clusters = Butina.ClusterData(dists, nPts=n, distThresh=cutoff, isDistData=True)
     cluster_ids = np.empty(n, dtype=int)
     for cid, members in enumerate(clusters):
         for m in members:
@@ -105,6 +106,63 @@ def _group_split(groups: np.ndarray, test_size: float, seed: int) -> Tuple[np.nd
     idx = np.arange(len(groups))
     train_idx, val_idx = next(gss.split(idx, groups=groups))
     return train_idx, val_idx
+
+
+def _group_stratified_split(groups: np.ndarray, y: np.ndarray, test_size: float, seed: int) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Approximate stratified split that keeps groups intact while matching class ratio.
+    Greedy assignment of groups to train/val to minimize deviation from overall positive rate and target size.
+    """
+    rng = np.random.RandomState(seed)
+    unique_groups, inv = np.unique(groups, return_inverse=True)
+    group_indices = {g: np.where(inv == i)[0] for i, g in enumerate(unique_groups)}
+    group_stats = []
+    for g, idxs in group_indices.items():
+        n = len(idxs)
+        pos = int(np.sum(y[idxs] == 1))
+        group_stats.append((g, n, pos))
+    rng.shuffle(group_stats)
+
+    total = len(y)
+    target_val = int(round(test_size * total))
+    target_train = total - target_val
+    overall_pos_rate = float(np.mean(y == 1)) if total > 0 else 0.0
+
+    train_set: List[int] = []
+    val_set: List[int] = []
+    n_train = pos_train = 0
+    n_val = pos_val = 0
+    lambda_size = 0.1
+
+    for g, n, pos in group_stats:
+        # Force to train if val would exceed target excessively
+        if n_val + n > target_val and n_train < target_train:
+            dest = "train"
+        elif n_train + n > target_train and n_val < target_val:
+            dest = "val"
+        else:
+            new_pos_val = pos_val + pos
+            new_n_val = n_val + n
+            new_pos_train = pos_train + pos
+            new_n_train = n_train + n
+
+            val_rate = (new_pos_val / new_n_val) if new_n_val > 0 else overall_pos_rate
+            train_rate = (new_pos_train / new_n_train) if new_n_train > 0 else overall_pos_rate
+
+            val_cost = (val_rate - overall_pos_rate) ** 2 + lambda_size * ((new_n_val - target_val) / total) ** 2
+            train_cost = (train_rate - overall_pos_rate) ** 2 + lambda_size * ((new_n_train - target_train) / total) ** 2
+            dest = "val" if val_cost < train_cost else "train"
+
+        if dest == "val":
+            val_set.extend(group_indices[g])
+            n_val += n
+            pos_val += pos
+        else:
+            train_set.extend(group_indices[g])
+            n_train += n
+            pos_train += pos
+
+    return np.asarray(train_set, dtype=int), np.asarray(val_set, dtype=int)
 
 
 # ------------------------------
@@ -255,7 +313,10 @@ def make_split_indices(train_df: pd.DataFrame, chosen_strategy: str, config: Dic
     smiles_col = config.get("smiles_col", "smiles")
     radius = int(config.get("radius", 2))
     n_bits = int(config.get("n_bits", 2048))
-    y = train_df[y_col].to_numpy()
+    y_series = train_df[y_col]
+    if y_series.dtype == object:
+        y_series = y_series.astype(str).str.lower().str.strip().map({"active": 1, "inactive": 0})
+    y = y_series.to_numpy()
 
     if chosen_strategy == "random_stratified":
         return _random_stratified_split(train_df, y, test_size, seed)
@@ -267,7 +328,7 @@ def make_split_indices(train_df: pd.DataFrame, chosen_strategy: str, config: Dic
 
     if chosen_strategy == "murcko_group":
         groups = _murcko_groups(train_df, smiles_col)
-        return _group_split(groups, test_size, seed)
+        return _group_stratified_split(groups, y, test_size, seed)
 
     if chosen_strategy.startswith("cluster_group"):
         try:
@@ -278,7 +339,7 @@ def make_split_indices(train_df: pd.DataFrame, chosen_strategy: str, config: Dic
         groups = _cluster_groups(train_fps, cutoff)
         if groups is None:
             raise ValueError("Cluster grouping failed.")
-        return _group_split(groups, test_size, seed)
+        return _group_stratified_split(groups, y, test_size, seed)
 
     raise ValueError(f"Unknown strategy {chosen_strategy}")
 

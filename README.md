@@ -9,9 +9,9 @@ Pipeline to pick the top ~100 actives from a blind set (~3000 compounds) using s
 - Optional: xgboost, lightgbm (if absent, fallback models still run)
 
 ## Inputs
-- `known_path` (CSV/TSV): columns `smiles`, `status` (`active`/`inactive`), optional `name`
-- `blind_path` (.smi): `smiles<TAB>name`
-- Configure paths and settings in `config.json`.
+- Training (`known_path`): headerless tab-separated `.smi` with `smi<TAB>mol_id<TAB>act` (`act` accepts active/inactive or 1/0). CSV/TSV with headers `smiles, act[, name]` also works.
+- Blind (`blind_path`): headerless tab-separated `.smi` with `smi<TAB>mol_id`. CSV/TSV with headers `smiles[, name]` also works.
+- Configure paths and settings in `config.json` (`smiles_col`, `status_col=act`, `name_col`).
 
 ## One-Command Run
 ```bash
@@ -26,11 +26,13 @@ Metrics summary aggregation runs by default; skip with `--skip-metrics-summary`.
 ## Individual Steps
 - Featurize (Morgan + 2D): `python featurize.py --config config.json`
 - Similarity rank vs actives: `python similarity_rank.py --config config.json`
-- Train + predict (scaffold CV, calibrated RF/XGB/LGBM/HGB): `python train_models.py --config config.json`
-- Chemprop D-MPNN ensemble (with Morgan bits): `python chemprop_runner.py --config config.json`
-- Keras dense baseline on Morgan bits: `python nn_keras.py --config config.json`
-- Consensus/ECR: `python consensus.py --config config.json`
+- Train + predict (scaffold CV, calibrated RF/XGB/LGBM/HGB with full-data retrain): `python train_models.py --config config.json`
+- Chemprop D-MPNN ensemble (with Morgan bits, full-data ensemble seeds): `python chemprop_runner.py --config config.json`
+- Keras dense baseline on Morgan bits (split for metrics, full-data retrain for scoring): `python nn_keras.py --config config.json`
+- Consensus/ECR (smoothed weights using precision@20/100 or EF@100): `python consensus.py --config config.json`
 - Metrics summary: `python metrics_summary.py --config config.json`
+- Export final top IDs (no header, one per line; optional scaffold cap for diversity):  
+  `python select_top_compounds.py --rank_file outputs/consensus/ecr_consensus.csv --suffix run1 --top_k 100 --scaffold_cap 2`
 - Split choice (Stage 1): `python choose_split_mode.py --train_csv TRAIN.csv --blind_csv BLIND.csv --out_json split_mode.json --smiles_col smiles`
 - Stage 2 runner enforcing the chosen split:  
   `python run_pipeline.py --train_csv TRAIN.csv --blind_csv BLIND.csv --split_mode_json split_mode.json [--chemprop] [--keras]`
@@ -96,7 +98,7 @@ Outputs to review:
 - `outputs/consensus/ecr_consensus.csv` (weighted consensus ranking; use this as primary pick list)
 
 ## Notes
-- Uses Bemis–Murcko scaffold split for honest validation.
+- Uses Bemis–Murcko scaffold CV for honest validation (n_folds from `cv_folds`).
 - Probabilities are calibrated (isotonic or Platt) before ranking.
 - Early-enrichment focus: precision@k, EF1%, BEDROC.
 - Adjust fingerprint radius/bits, top-k settings, and seeds in `config.json`. Chemprop uses binary Morgan (`chemprop_morgan_radius`, `chemprop_morgan_bits`) and can append RDKit 2D descriptors when `chemprop_use_rdkit_desc` is true. Consensus knobs: `consensus_tau` (decay), `consensus_focus_k` (only ranks up to this count), `consensus_metric` (weighting metric, e.g., precision@100 or pr_auc), `consensus_weight_fallback` (default weight if metric missing).

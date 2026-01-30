@@ -23,6 +23,7 @@ from chem_utils import (
     ensure_dir,
     precision_at_k,
     enrichment_factor_at_k,
+    normalize_activity,
 )
 from split_choice import load_split_mode, make_split_indices
 
@@ -98,6 +99,11 @@ def load_features(feat_dir: str, known_df: pd.DataFrame):
     known_key = known_df[["name", "smiles"]].copy()
     known_key["__order"] = np.arange(len(known_key))
     merged = merged.merge(known_key, on=["name", "smiles"], how="left")
+    if merged["__order"].isna().any() or len(merged) != len(known_df):
+        missing = merged[merged["__order"].isna()][["name", "smiles"]]
+        raise ValueError(
+            f"Feature alignment failed: {missing.shape[0]} rows could not be matched by name+smiles."
+        )
     merged = merged.sort_values("__order").reset_index(drop=True)
     feat_cols = [c for c in merged.columns if c.startswith("bit_")]
 
@@ -136,6 +142,23 @@ def train_one_seed(X, y, train_idx, val_idx, seed=42, k=100):
     return model
 
 
+def train_full_seed(X, y, seed=42):
+    tf.random.set_seed(seed)
+    np.random.seed(seed)
+    cw = compute_class_weight(y)
+    model = build_model(input_dim=X.shape[1])
+    # Fixed-length training on all data (no holdout) to satisfy full-data retrain.
+    model.fit(
+        X,
+        y,
+        epochs=80,
+        batch_size=128,
+        class_weight=cw,
+        verbose=2,
+    )
+    return model
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, default="config.json")
@@ -151,17 +174,24 @@ def main():
     known_path = cfg["known_path"]
     blind_path = cfg["blind_path"]
     smiles_col = cfg.get("smiles_col", "smiles")
-    status_col = cfg.get("status_col", "status")
+    status_col = cfg.get("status_col", "act")
     name_col = cfg.get("name_col", "name")
 
-    sep = "\t" if known_path.endswith(".tsv") else ","
-    known_df = pd.read_csv(known_path, sep=sep)
-    known_df[status_col] = known_df[status_col].str.lower().str.strip()
+    if known_path.endswith(".smi"):
+        known_df = pd.read_csv(known_path, sep="\t", header=None, names=[smiles_col, name_col, status_col])
+    else:
+        sep = "\t" if known_path.endswith(".tsv") else ","
+        known_df = pd.read_csv(known_path, sep=sep)
+    known_df[status_col] = normalize_activity(known_df[status_col])
     known_df[name_col] = known_df[name_col] if name_col in known_df.columns else known_df.index.astype(str)
     known_df["act"] = (known_df[status_col] == "active").astype(int)
     known_df = known_df.rename(columns={name_col: "name", smiles_col: "smiles"})
 
-    blind_df = pd.read_csv(blind_path, sep="\t", header=None, names=["smiles", "name"])
+    if blind_path.endswith(".smi"):
+        blind_df = pd.read_csv(blind_path, sep="\t", header=None, names=["smiles", "name"])
+    else:
+        sep_blind = "\t" if blind_path.endswith(".tsv") else ","
+        blind_df = pd.read_csv(blind_path, sep=sep_blind)
     if blind_df["name"].isna().all():
         blind_df["name"] = blind_df.index.astype(str)
 
@@ -183,14 +213,18 @@ def main():
     preds = []
     val_metrics = []
     for s in seeds:
-        print(f"\n=== Training Keras seed {s} ===")
+        print(f"\n=== Training Keras seed {s} (val for metrics) ===")
         model = train_one_seed(X, y, train_idx, val_idx, seed=s, k=100)
         # evaluate on val split
         val_probs = model.predict(X[val_idx], verbose=0).ravel()
         p100 = precision_at_k(y[val_idx], val_probs, 100)
         ef100 = enrichment_factor_at_k(y[val_idx], val_probs, 100)
         val_metrics.append({"seed": s, "precision@100": p100, "ef@100": ef100})
-        preds.append(model.predict(blind_X, verbose=0).ravel())
+
+        # Retrain on full labeled data for final prediction
+        print(f"=== Retraining Keras seed {s} on full data for final scoring ===")
+        full_model = train_full_seed(X, y, seed=s)
+        preds.append(full_model.predict(blind_X, verbose=0).ravel())
 
     mean_val = {k: float(np.mean([m[k] for m in val_metrics])) for k in ["precision@100", "ef@100"]}
 

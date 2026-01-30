@@ -3,7 +3,7 @@
   "blind_path": "data/blind_set.smi",
   "output_dir": "outputs",
   "smiles_col": "smiles",
-  "status_col": "status",
+  "status_col": "act",
   "name_col": "name",
   "fingerprint": {
     "radius": 2,

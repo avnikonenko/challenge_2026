@@ -23,25 +23,51 @@ from chem_utils import (
     morgan_fingerprint,
     seed_everything,
     tanimoto_similarity,
+    normalize_activity,
 )
 
 
-def read_known_actives(path: str, smiles_col: str, status_col: str) -> pd.DataFrame:
-    sep = "\t" if path.endswith(".tsv") else ","
-    df = pd.read_csv(path, sep=sep)
+def read_known_actives(path: str, smiles_col: str, status_col: str, name_col: str) -> pd.DataFrame:
+    """
+    Supports headerless .smi files (tab-separated) with columns:
+    smi, mol_id, class  -> mapped to smiles, name, status.
+    Falls back to CSV/TSV with headers.
+    """
+    if path.endswith(".smi"):
+        df = pd.read_csv(path, sep="\t", header=None, names=[smiles_col, name_col, status_col])
+    else:
+        sep = "\t" if path.endswith(".tsv") else ","
+        df = pd.read_csv(path, sep=sep)
     df = df.dropna(subset=[smiles_col, status_col]).copy()
-    df[status_col] = df[status_col].str.lower().str.strip()
+    df[status_col] = normalize_activity(df[status_col])
     actives = df[df[status_col] == "active"].reset_index(drop=True)
+    # Normalize name column for downstream compatibility.
+    if name_col != "name" and name_col in actives.columns:
+        actives["name"] = actives[name_col]
     return actives
 
 
-def read_blind(path: str) -> pd.DataFrame:
-    df = pd.read_csv(path, sep="\t", header=None, names=["smiles", "name"])
-    df = df.dropna(subset=["smiles"]).copy()
-    if "name" not in df.columns or df["name"].isna().all():
-        df["name"] = df.index.astype(str)
+def read_blind(path: str, smiles_col: str, name_col: str) -> pd.DataFrame:
+    """
+    Supports:
+    - headerless .smi (tab) with smi, mol_id
+    - CSV/TSV with headers containing smiles_col and optional name_col
+    """
+    if path.endswith(".smi"):
+        df = pd.read_csv(path, sep="\t", header=None, names=[smiles_col, name_col])
     else:
-        df["name"] = df["name"].fillna(df.index.astype(str))
+        from chem_utils import infer_sep
+
+        sep = infer_sep(path)
+        df = pd.read_csv(path, sep=sep)
+        if smiles_col not in df.columns:
+            raise ValueError(f"Missing required column '{smiles_col}' in blind set.")
+        if name_col not in df.columns:
+            df[name_col] = df.index.astype(str)
+    df = df.dropna(subset=[smiles_col]).copy()
+    if name_col != "name" and name_col in df.columns:
+        df["name"] = df[name_col]
+    df["name"] = df["name"].fillna(df.index.astype(str))
     return df
 
 
@@ -70,6 +96,7 @@ def compute_similarity_metrics(
         max_sim = sims_sorted[0] if sims_sorted else 0.0
         rec: Dict[str, float] = {
             "name": name,
+            "mol_id": name,
             "smiles": smi,
             "max_tanimoto": max_sim,
         }
@@ -83,6 +110,9 @@ def compute_similarity_metrics(
     df = pd.DataFrame(records)
     df = df.sort_values(by=["rank_score", "max_tanimoto"], ascending=False).reset_index(drop=True)
     df.insert(0, "rank", df.index + 1)
+    # Keep both mol_id and name for compatibility; mol_id mirrors original identifier.
+    if "mol_id" not in df.columns and "name" in df.columns:
+        df.insert(1, "mol_id", df["name"])
     return df
 
 
@@ -95,13 +125,14 @@ def main(config_path: str) -> None:
     known_path = cfg_dict["known_path"]
     blind_path = cfg_dict["blind_path"]
     smiles_col = cfg_dict.get("smiles_col", "smiles")
-    status_col = cfg_dict.get("status_col", "status")
+    status_col = cfg_dict.get("status_col", "act")
+    name_col = cfg_dict.get("name_col", "name")
     out_dir = cfg_dict.get("output_dir", "outputs")
     sim_dir = os.path.join(out_dir, "similarity")
     ensure_dir(sim_dir)
 
-    actives_df = read_known_actives(known_path, smiles_col, status_col)
-    blind_df = read_blind(blind_path)
+    actives_df = read_known_actives(known_path, smiles_col, status_col, name_col)
+    blind_df = read_blind(blind_path, smiles_col, name_col)
     active_fps = prepare_active_fps(actives_df, feat_cfg, smiles_col)
 
     print(f"Computing similarity for {len(blind_df)} blind molecules against {len(active_fps)} actives.")

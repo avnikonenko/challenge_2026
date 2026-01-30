@@ -26,12 +26,21 @@ from chem_utils import (
     mol_from_smiles,
     morgan_fingerprint,
     seed_everything,
+    normalize_activity,
 )
 
 
 def read_known(path: str, smiles_col: str, status_col: str, name_col: str) -> pd.DataFrame:
-    sep = "\t" if path.endswith(".tsv") else ","
-    df = pd.read_csv(path, sep=sep)
+    """
+    Supports headerless .smi files (tab-separated) with columns:
+    smi, mol_id, class -> mapped to smiles, name, status.
+    Falls back to CSV/TSV with headers.
+    """
+    if path.endswith(".smi"):
+        df = pd.read_csv(path, sep="\t", header=None, names=[smiles_col, name_col, status_col])
+    else:
+        sep = "\t" if path.endswith(".tsv") else ","
+        df = pd.read_csv(path, sep=sep)
     for col in [smiles_col, status_col]:
         if col not in df.columns:
             raise ValueError(f"Missing required column '{col}' in known dataset.")
@@ -41,18 +50,35 @@ def read_known(path: str, smiles_col: str, status_col: str, name_col: str) -> pd
     if name_col != "name":
         df["name"] = df[name_col]
     df = df.dropna(subset=[smiles_col, status_col]).copy()
-    df[status_col] = df[status_col].str.lower().str.strip()
+    df[status_col] = normalize_activity(df[status_col])
     return df
 
 
-def read_blind(path: str) -> pd.DataFrame:
-    # blind .smi expected as: SMILES<TAB>name
-    df = pd.read_csv(path, sep="\t", header=None, names=["smiles", "name"])
-    df = df.dropna(subset=["smiles"]).copy()
-    if "name" not in df.columns or df["name"].isna().all():
-        df["name"] = df.index.astype(str)
+def read_blind(path: str, smiles_col: str = "smiles", name_col: str = "name") -> pd.DataFrame:
+    """
+    Supports:
+    - headerless .smi (tab): smi, mol_id
+    - CSV/TSV with headers containing smiles_col and optional name_col
+    """
+    if path.endswith(".smi"):
+        df = pd.read_csv(path, sep="\t", header=None, names=[smiles_col, name_col])
     else:
-        df["name"] = df["name"].fillna(df.index.astype(str))
+        from chem_utils import infer_sep
+
+        sep = infer_sep(path)
+        df = pd.read_csv(path, sep=sep)
+        if smiles_col not in df.columns:
+            raise ValueError(f"Missing required column '{smiles_col}' in blind set.")
+        if name_col not in df.columns:
+            df[name_col] = df.index.astype(str)
+    df = df.dropna(subset=[smiles_col]).copy()
+    if name_col not in df.columns or df[name_col].isna().all():
+        df[name_col] = df.index.astype(str)
+    else:
+        df[name_col] = df[name_col].fillna(df.index.astype(str))
+    # Normalize to standard downstream names
+    if name_col != "name":
+        df["name"] = df[name_col]
     return df
 
 
@@ -105,7 +131,7 @@ def main(config_path: str) -> None:
     known_path = cfg_dict["known_path"]
     blind_path = cfg_dict["blind_path"]
     smiles_col = cfg_dict.get("smiles_col", "smiles")
-    status_col = cfg_dict.get("status_col", "status")
+    status_col = cfg_dict.get("status_col", "act")
     name_col = cfg_dict.get("name_col", "name")
     out_dir = cfg_dict.get("output_dir", "outputs")
     feat_dir = os.path.join(out_dir, "features")

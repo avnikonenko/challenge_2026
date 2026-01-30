@@ -9,8 +9,8 @@ from sklearn.model_selection import GridSearchCV, KFold, cross_val_predict, Stra
 from sklearn.model_selection import ShuffleSplit, GroupShuffleSplit
 
 # f_train = '/home/sany/projects/rf/MorganFprRDKit_train_0.csv'
-f_train = '/media/sany/Workplace/projects/2023_challenge/MorganFprRDKit_train_protonated_0.csv'
-f_test = '/media/sany/Workplace/projects/2023_challenge/MorganFprRDKit_blind_protonated_0.csv'
+f_train = 'MorganFprRDKit_train_protonated_0.csv'
+f_test = 'MorganFprRDKit_blind_protonated_0.csv'
 
 data_train = pd.read_csv(f_train)
 x_train = data_train.drop(['mol_id', 'act'], axis='columns')
@@ -40,4 +40,4 @@ model = GridSearchCV(model, param, cv=cv, n_jobs=3).fit(X=x_train, y=y_train)  #
 res = model.predict(x_test)
 
 data_test.loc[:,'act'] = res
-data_test.loc[:,['act','mol_id']].to_csv('/media/sany/Workplace/projects/2023_challenge/blind_res_class_250')
+data_test.loc[:,['act','mol_id']].to_csv('blind_res_class_250')

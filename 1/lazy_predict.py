@@ -9,8 +9,8 @@ import pandas as pd
 # boston = datasets.load_boston()
 # X, y = shuffle(boston.data, boston.target, random_state=13)
 # X = X.astype(np.float32)
-f_train = '/media/sany/Workplace/projects/2023_challenge/MorganFprRDKit_train_protonated_0.csv'
-f_test = '/media/sany/Workplace/projects/2023_challenge/MorganFprRDKit_blind_protonated_0.csv'
+f_train = 'MorganFprRDKit_train_protonated_0.csv'
+f_test = 'MorganFprRDKit_blind_protonated_0.csv'
 #train
 data_train = pd.read_csv(f_train)
 x_train = data_train.drop(['mol_id', 'act'], axis='columns')

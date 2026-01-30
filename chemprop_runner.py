@@ -26,6 +26,7 @@ from chem_utils import (
     load_config,
     precision_at_k,
     seed_everything,
+    normalize_activity,
 )
 from split_choice import load_split_mode, make_split_indices
 
@@ -87,7 +88,8 @@ def train_fold(
         cmd.extend(["--features_generator", "rdkit_2d_normalized"])
     run_cmd(cmd, save_dir)
     # Return checkpoint path
-    ckpt = next(save_dir.glob("fold_*/*.pt"), None)
+    # Chemprop versions differ in checkpoint layout; search recursively.
+    ckpt = next(save_dir.rglob("*.pt"), None)
     if ckpt is None:
         raise RuntimeError(f"No checkpoint found in {save_dir}")
     return ckpt
@@ -172,8 +174,10 @@ def main(config_path: str) -> None:
     seed_everything(seed)
 
     smiles_col = cfg.get("smiles_col", "smiles")
-    status_col = cfg.get("status_col", "status")
+    status_col = cfg.get("status_col", "act")
     name_col = cfg.get("name_col", "name")
+    # Ensure consistency with split_mode (uses config_used["y_col"])
+    split_y_col = None
     eval_topk = cfg.get("eval_topk", [20, 100])
     bedroc_alpha = cfg.get("bedroc_alpha", 20.0)
     out_dir = Path(cfg.get("output_dir", "outputs"))
@@ -195,19 +199,32 @@ def main(config_path: str) -> None:
     known_path = cfg["known_path"]
     blind_path = cfg["blind_path"]
 
-    sep = "\t" if known_path.endswith(".tsv") else ","
-    known_df = pd.read_csv(known_path, sep=sep).dropna(subset=[smiles_col, status_col]).copy()
-    known_df[status_col] = known_df[status_col].str.lower().str.strip()
+    if known_path.endswith(".smi"):
+        known_df = pd.read_csv(known_path, sep="\t", header=None, names=[smiles_col, name_col, status_col])
+    else:
+        sep = "\t" if known_path.endswith(".tsv") else ","
+        known_df = pd.read_csv(known_path, sep=sep)
+    known_df = known_df.dropna(subset=[smiles_col, status_col]).copy()
+    known_df[status_col] = normalize_activity(known_df[status_col])
     known_df[name_col] = known_df[name_col] if name_col in known_df.columns else known_df.index.astype(str)
     known_df["target"] = (known_df[status_col] == "active").astype(int)
 
-    blind_df = pd.read_csv(blind_path, sep="\t", header=None, names=["smiles", name_col])
+    if blind_path.endswith(".smi"):
+        blind_df = pd.read_csv(blind_path, sep="\t", header=None, names=["smiles", name_col])
+    else:
+        sep_blind = "\t" if blind_path.endswith(".tsv") else ","
+        blind_df = pd.read_csv(blind_path, sep=sep_blind)
     if blind_df[name_col].isna().all():
         blind_df[name_col] = blind_df.index.astype(str)
 
     if split_mode:
         print(f"[chemprop] Using split strategy: {split_mode['chosen_strategy']}")
-        train_idx, val_idx = make_split_indices(known_df, split_mode["chosen_strategy"], split_mode["config_used"], seed)
+        split_cfg = split_mode.get("config_used", {})
+        split_y_col = split_cfg.get("y_col", status_col)
+        # If split config used a different y_col, derive it on the fly
+        if split_y_col not in known_df.columns and split_y_col != status_col:
+            known_df[split_y_col] = known_df[status_col]
+        train_idx, val_idx = make_split_indices(known_df, split_mode["chosen_strategy"], split_cfg, seed)
     else:
         from sklearn.model_selection import train_test_split
         print("[chemprop] split_mode_json not provided; using stratified random split.")
@@ -216,7 +233,7 @@ def main(config_path: str) -> None:
         )
 
     fold_metrics = []
-    checkpoints: List[Path] = []
+    split_checkpoints: List[Path] = []
 
     with tempfile.TemporaryDirectory() as tmpdir_str:
         tmpdir = Path(tmpdir_str)
@@ -229,8 +246,9 @@ def main(config_path: str) -> None:
         fold_dir.mkdir(parents=True, exist_ok=True)
         train_csv = tmpdir / "train_split.csv"
         val_csv = tmpdir / "val_split.csv"
-        prepare_csv(known_df.iloc[train_idx], smiles_col, "target", train_csv)
-        prepare_csv(known_df.iloc[val_idx], smiles_col, "target", val_csv)
+        label_col = split_y_col if split_y_col else status_col
+        prepare_csv(known_df.iloc[train_idx], smiles_col, label_col, train_csv)
+        prepare_csv(known_df.iloc[val_idx], smiles_col, label_col, val_csv)
 
         ckpt = train_fold(
             train_csv,
@@ -241,7 +259,7 @@ def main(config_path: str) -> None:
             morgan_radius,
             morgan_bits,
         )
-        checkpoints.append(ckpt)
+        split_checkpoints.append(ckpt)
 
         pred_csv = tmpdir / "valpred_split.csv"
         predict(ckpt, val_csv, pred_csv, use_rdkit_desc, morgan_radius, morgan_bits)
@@ -257,10 +275,62 @@ def main(config_path: str) -> None:
             json.dump(mean_metrics, f, indent=2)
         print(f"[chemprop] Split metrics -> {metrics_path}")
 
-        # Ensemble predict blind set
-        pred_df = ensemble_predict(
-            checkpoints[:ensemble_size], blind_csv, use_rdkit_desc, morgan_radius, morgan_bits
-        )
+        # Retrain ensemble on full labeled data for final scoring
+        full_dir = chemprop_dir / "full_train"
+        full_dir.mkdir(parents=True, exist_ok=True)
+        full_train_csv = tmpdir / "train_full.csv"
+        label_col = split_y_col if split_y_col else status_col
+        prepare_csv(known_df, smiles_col, label_col, full_train_csv)
+
+        full_ckpts: List[Path] = []
+        for i in range(ensemble_size):
+            seed_i = seed + 100 + i  # offset seeds for diversity
+            cmd = [
+                "chemprop_train",
+                "--data_path",
+                str(full_train_csv),
+                "--dataset_type",
+                "classification",
+                "--save_dir",
+                str(full_dir / f"ensemble_{i}"),
+                "--metric",
+                "prc-auc",
+                "--extra_metrics",
+                "roc-auc",
+                "--split_type",
+                "scaffold",
+                "--split_sizes",
+                "0.9",
+                "0.1",
+                "0.0",
+                "--epochs",
+                "40",
+                "--batch_size",
+                "64",
+                "--ensemble_size",
+                "1",
+                "--seed",
+                str(seed_i),
+                "--quiet",
+                "--features_generator",
+                "morgan",
+                "--morgan_radius",
+                str(morgan_radius),
+                "--morgan_num_bits",
+                str(morgan_bits),
+            ]
+            if use_rdkit_desc:
+                cmd.extend(["--features_generator", "rdkit_2d_normalized"])
+            run_cmd(cmd, full_dir)
+            ckpt_path = next((full_dir / f"ensemble_{i}").glob("fold_*/*.pt"), None)
+            if ckpt_path:
+                full_ckpts.append(ckpt_path)
+
+        if not full_ckpts:
+            # Fallback to original checkpoint if full retrain failed
+            full_ckpts = checkpoints[:ensemble_size]
+
+        pred_df = ensemble_predict(full_ckpts, blind_csv, use_rdkit_desc, morgan_radius, morgan_bits)
         pred_df[name_col] = blind_df[name_col].values
         pred_df = pred_df.sort_values(by="score", ascending=False).reset_index(drop=True)
         pred_df.insert(0, "rank", pred_df.index + 1)

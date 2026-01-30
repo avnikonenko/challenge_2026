@@ -111,10 +111,17 @@ def main(config_path: str) -> None:
         frames.append(load_prediction_file(path, model_name=model_name, params=params))
         # Load validation weight
         metrics_path = output_dir / "metrics" / f"{model_name}_cv.json"
+        weight = weight_fallback
         if metrics_path.exists():
             try:
                 m = load_config(metrics_path)
-                weight = float(m.get(metric_key, m.get("pr_auc", weight_fallback)))
+                # Smoothed weighting: prefer average of precision@20 and precision@100, else EF@100, else metric_key/pr_auc.
+                if "precision@20" in m and "precision@100" in m:
+                    weight = float((m["precision@20"] + m["precision@100"]) / 2.0)
+                elif "ef@100" in m:
+                    weight = float(m["ef@100"])
+                else:
+                    weight = float(m.get(metric_key, m.get("pr_auc", weight_fallback)))
             except Exception:
                 weight = weight_fallback
         elif model_name == "chemprop":
@@ -122,7 +129,12 @@ def main(config_path: str) -> None:
             if metrics_path.exists():
                 try:
                     m = load_config(metrics_path)
-                    weight = float(m.get(metric_key, m.get("pr_auc", weight_fallback)))
+                    if "precision@20" in m and "precision@100" in m:
+                        weight = float((m["precision@20"] + m["precision@100"]) / 2.0)
+                    elif "ef@100" in m:
+                        weight = float(m["ef@100"])
+                    else:
+                        weight = float(m.get(metric_key, m.get("pr_auc", weight_fallback)))
                 except Exception:
                     weight = weight_fallback
             else:
