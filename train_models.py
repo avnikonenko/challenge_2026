@@ -45,13 +45,18 @@ def load_feature_set(
     smiles_col: str,
     name_col: str,
 ) -> Tuple[np.ndarray, np.ndarray, pd.DataFrame, List[str], np.ndarray, pd.DataFrame]:
-    act_path = os.path.join(feat_dir, f"actives_{kind}.parquet")
-    inact_path = os.path.join(feat_dir, f"inactives_{kind}.parquet")
-    blind_path = os.path.join(feat_dir, f"unknown_{kind}.parquet")
+    def _read(base: str) -> pd.DataFrame:
+        p_parquet = os.path.join(feat_dir, f"{base}_{kind}.parquet")
+        p_pkl = os.path.join(feat_dir, f"{base}_{kind}.pkl")
+        if os.path.exists(p_parquet):
+            return pd.read_parquet(p_parquet)
+        if os.path.exists(p_pkl):
+            return pd.read_pickle(p_pkl)
+        raise FileNotFoundError(f"Missing feature file for {base}_{kind} (.parquet or .pkl)")
 
-    act = pd.read_parquet(act_path)
-    inact = pd.read_parquet(inact_path)
-    blind = pd.read_parquet(blind_path)
+    act = _read("actives")
+    inact = _read("inactives")
+    blind = _read("unknown")
 
     act = act.copy()
     inact = inact.copy()

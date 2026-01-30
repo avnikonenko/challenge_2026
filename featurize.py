@@ -118,9 +118,15 @@ def write_split(
     base_out: str,
     feature_kind: str,
 ) -> str:
-    path = os.path.join(base_out, f"{status}_{feature_kind}.parquet")
-    df.to_parquet(path, index=False)
-    return path
+    path_parquet = os.path.join(base_out, f"{status}_{feature_kind}.parquet")
+    try:
+        df.to_parquet(path_parquet, index=False)
+        return path_parquet
+    except Exception:
+        # Fallback when pyarrow/fastparquet is unavailable.
+        path_pkl = os.path.join(base_out, f"{status}_{feature_kind}.pkl")
+        df.to_pickle(path_pkl)
+        return path_pkl
 
 
 def main(config_path: str) -> None:

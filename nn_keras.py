@@ -90,9 +90,18 @@ def build_model(input_dim, lr=8e-4, drop=0.35, l2_reg=1e-5):
 
 
 def load_features(feat_dir: str, known_df: pd.DataFrame):
-    morgan_act = pd.read_parquet(os.path.join(feat_dir, "actives_morgan.parquet"))
-    morgan_inact = pd.read_parquet(os.path.join(feat_dir, "inactives_morgan.parquet"))
-    morgan_blind = pd.read_parquet(os.path.join(feat_dir, "unknown_morgan.parquet"))
+    def _read(name: str) -> pd.DataFrame:
+        p_parquet = os.path.join(feat_dir, f"{name}_morgan.parquet")
+        p_pkl = os.path.join(feat_dir, f"{name}_morgan.pkl")
+        if os.path.exists(p_parquet):
+            return pd.read_parquet(p_parquet)
+        if os.path.exists(p_pkl):
+            return pd.read_pickle(p_pkl)
+        raise FileNotFoundError(f"Missing feature file {name}_morgan (.parquet or .pkl)")
+
+    morgan_act = _read("actives")
+    morgan_inact = _read("inactives")
+    morgan_blind = _read("unknown")
 
     morgan_act["label"] = 1
     morgan_inact["label"] = 0

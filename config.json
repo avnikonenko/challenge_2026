@@ -16,7 +16,7 @@
   "bedroc_alpha": 20.0,
   "cv_folds": 5,
   "chemprop_use_rdkit_desc": false,
-  "chemprop_ensemble": 8,
+  "chemprop_ensemble": 5,
   "chemprop_morgan_radius": 2,
   "chemprop_morgan_bits": 2048,
   "consensus_tau": 35.0,

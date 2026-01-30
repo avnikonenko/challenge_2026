@@ -242,7 +242,11 @@ def main(config_path: str) -> None:
         blind_df[["smiles"]].to_csv(blind_csv, index=False)
 
         fold_id = 0
-        fold_dir = chemprop_dir / "split_eval"
+        fold_dir = chemprop_dir / "split_eval" / f"seed_{seed}"
+        if fold_dir.exists():
+            # Avoid stale checkpoints from prior runs
+            for old in fold_dir.rglob("*.pt"):
+                old.unlink()
         fold_dir.mkdir(parents=True, exist_ok=True)
         train_csv = tmpdir / "train_split.csv"
         val_csv = tmpdir / "val_split.csv"
@@ -277,6 +281,9 @@ def main(config_path: str) -> None:
 
         # Retrain ensemble on full labeled data for final scoring
         full_dir = chemprop_dir / "full_train"
+        if full_dir.exists():
+            for old in full_dir.rglob("*.pt"):
+                old.unlink()
         full_dir.mkdir(parents=True, exist_ok=True)
         full_train_csv = tmpdir / "train_full.csv"
         prepare_csv(known_df, smiles_col, "target", full_train_csv)

@@ -206,7 +206,11 @@ def choose_split_strategy(train_df: pd.DataFrame, blind_df: pd.DataFrame, config
 
     y_series = train_df[y_col]
     if y_series.dtype == object:
-        y = y_series.str.lower().str.strip().map({"active": 1, "inactive": 0}).fillna(0).to_numpy()
+        mapped = y_series.astype(str).str.lower().str.strip().map({"active": 1, "inactive": 0})
+        if mapped.isna().any():
+            unknown = y_series[mapped.isna()].unique()
+            raise ValueError(f"Unknown labels in y_col '{y_col}': {unknown}")
+        y = mapped.to_numpy()
     else:
         y = y_series.to_numpy()
     n_actives_total = int(np.sum(y == 1))
