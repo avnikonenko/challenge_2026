@@ -68,7 +68,7 @@ class PrecisionAtKCallback(Callback):
             self.model.set_weights(self.best_weights)
 
 
-def build_model(input_dim, lr=8e-4, drop=0.35, l2_reg=1e-5):
+def build_model(input_dim, lr=8e-4, drop=0.35, l2_reg=1e-5, grad_clip=None):
     model = Sequential()
     model.add(Dense(1024, input_dim=input_dim, activation="relu", kernel_regularizer=l2(l2_reg)))
     model.add(BatchNormalization())
@@ -84,9 +84,12 @@ def build_model(input_dim, lr=8e-4, drop=0.35, l2_reg=1e-5):
 
     model.add(Dense(1, activation="sigmoid"))
 
+    opt_kwargs = {"learning_rate": lr}
+    if grad_clip is not None:
+        opt_kwargs["clipnorm"] = grad_clip
     model.compile(
         loss="binary_crossentropy",
-        optimizer=Adam(learning_rate=lr),
+        optimizer=Adam(**opt_kwargs),
         metrics=[AUC(name="roc_auc"), AUC(curve="PR", name="pr_auc")],
     )
     return model
@@ -129,7 +132,7 @@ def load_features(feat_dir: str, known_df: pd.DataFrame):
     return X, y, blind_X, blind_meta, feat_cols
 
 
-def train_one_seed(X, y, train_idx, val_idx, seed=42, k=100):
+def train_one_seed(X, y, train_idx, val_idx, seed=42, k=100, lr=8e-4, grad_clip=None, batch_size=128, max_epochs=250, patience=20):
     tf.random.set_seed(seed)
     np.random.seed(seed)
     x_tr, x_val = X[train_idx], X[val_idx]
@@ -138,16 +141,16 @@ def train_one_seed(X, y, train_idx, val_idx, seed=42, k=100):
     p100_cb = PrecisionAtKCallback(x_val, y_val, k=k)
     callbacks = [
         p100_cb,
-        EarlyStopping(monitor="val_p100", mode="max", patience=20, restore_best_weights=False),
-        ReduceLROnPlateau(monitor="val_p100", mode="max", factor=0.5, patience=8, min_lr=1e-6),
+        EarlyStopping(monitor="val_p100", mode="max", patience=patience, restore_best_weights=False),
+        ReduceLROnPlateau(monitor="val_p100", mode="max", factor=0.5, patience=max(4, patience // 2), min_lr=1e-6),
     ]
     cw = compute_class_weight(y_tr)
-    model = build_model(input_dim=X.shape[1])
+    model = build_model(input_dim=X.shape[1], lr=lr, grad_clip=grad_clip)
     hist = model.fit(
         x_tr,
         y_tr,
-        epochs=250,
-        batch_size=128,
+        epochs=max_epochs,
+        batch_size=batch_size,
         validation_data=(x_val, y_val),
         callbacks=callbacks,
         class_weight=cw,
@@ -157,17 +160,17 @@ def train_one_seed(X, y, train_idx, val_idx, seed=42, k=100):
     return model, best_epoch
 
 
-def train_full_seed(X, y, seed=42, epochs=80):
+def train_full_seed(X, y, seed=42, epochs=80, lr=8e-4, grad_clip=None, batch_size=128):
     tf.random.set_seed(seed)
     np.random.seed(seed)
     cw = compute_class_weight(y)
-    model = build_model(input_dim=X.shape[1])
+    model = build_model(input_dim=X.shape[1], lr=lr, grad_clip=grad_clip)
     # Fixed-length training on all data (no holdout) to satisfy full-data retrain.
     model.fit(
         X,
         y,
         epochs=epochs,
-        batch_size=128,
+        batch_size=batch_size,
         class_weight=cw,
         verbose=2,
     )
@@ -225,11 +228,28 @@ def main():
     X, y, blind_X, blind_meta, feat_cols = load_features(feat_dir, known_df)
 
     seeds = cfg.get("keras_seeds", [1, 2, 3, 4, 5])
+    keras_lr = cfg.get("keras_lr", 8e-4)
+    keras_grad_clip = cfg.get("keras_grad_clip", 1.0)
+    keras_batch_size = cfg.get("keras_batch_size", 256)
+    keras_max_epochs = cfg.get("keras_max_epochs", 200)
+    keras_patience = cfg.get("keras_patience", 20)
     preds = []
     val_metrics = []
     for s in seeds:
         print(f"\n=== Training Keras seed {s} (val for metrics) ===")
-        model, best_epoch = train_one_seed(X, y, train_idx, val_idx, seed=s, k=100)
+        model, best_epoch = train_one_seed(
+            X,
+            y,
+            train_idx,
+            val_idx,
+            seed=s,
+            k=100,
+            lr=keras_lr,
+            grad_clip=keras_grad_clip,
+            batch_size=keras_batch_size,
+            max_epochs=keras_max_epochs,
+            patience=keras_patience,
+        )
         # evaluate on val split
         val_probs = model.predict(X[val_idx], verbose=0).ravel()
         p100 = precision_at_k(y[val_idx], val_probs, 100)
@@ -238,7 +258,15 @@ def main():
 
         # Retrain on full labeled data for final prediction using best_epoch
         print(f"=== Retraining Keras seed {s} on full data for {best_epoch} epochs ===")
-        full_model = train_full_seed(X, y, seed=s, epochs=best_epoch)
+        full_model = train_full_seed(
+            X,
+            y,
+            seed=s,
+            epochs=best_epoch,
+            lr=keras_lr,
+            grad_clip=keras_grad_clip,
+            batch_size=keras_batch_size,
+        )
         preds.append(full_model.predict(blind_X, verbose=0).ravel())
 
     mean_val = {k: float(np.mean([m[k] for m in val_metrics])) for k in ["precision@100", "ef@100"]}
