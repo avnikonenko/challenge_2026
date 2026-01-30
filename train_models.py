@@ -337,7 +337,8 @@ def main(config_path: str) -> None:
                 filtered_models.append((model_tag, base_model))
 
         if not filtered_models:
-            raise ValueError("All models were skipped (either by flags or existing predictions). Enable or delete outputs to rerun.")
+            print("[train_models] No models to run for this feature set (all skipped or predictions present).")
+            continue
 
         model_names = [m[0] for m in filtered_models]
         print(f"Models to run on {feat_kind}: {', '.join(model_names)}")

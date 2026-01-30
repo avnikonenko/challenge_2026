@@ -37,6 +37,8 @@ Metrics summary aggregation runs by default; skip with `--skip-metrics-summary`.
 - Full pipeline (Stage 2) with skip flags forwarded:  
   `python run_pipeline.py --train_csv TRAIN.smi --blind_csv BLIND.smi --split_mode_json split_mode.json --chemprop --keras --output_dir outputs_run --skip-lgbm`
 - Conda env setup: `mamba env create -f environment.yml && conda activate vscreen`
+- Recompute consensus on selected prediction files:  
+  `python consensus_select.py --rank_files outputs/predictions/rf_morgan_blind_ranked.csv outputs/predictions/chemprop_blind_ranked.csv --metrics_dir outputs/metrics --output_dir outputs/consensus_custom`
 - Split choice (Stage 1): `python choose_split_mode.py --train_csv TRAIN.csv --blind_csv BLIND.csv --out_json split_mode.json --smiles_col smiles`
 - Stage 2 runner enforcing the chosen split:  
   `python run_pipeline.py --train_csv TRAIN.csv --blind_csv BLIND.csv --split_mode_json split_mode.json [--chemprop] [--keras]`
