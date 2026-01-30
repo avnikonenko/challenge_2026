@@ -42,7 +42,7 @@ def compute_class_weight(y):
 
 
 class PrecisionAtKCallback(Callback):
-    def __init__(self, x_val, y_val, k=100):
+    def __init__(self, x_val, y_val, k=100, ema_alpha=0.2):
         super().__init__()
         self.x_val = x_val
         self.y_val = y_val
@@ -50,6 +50,8 @@ class PrecisionAtKCallback(Callback):
         self.best = -1.0
         self.best_weights = None
         self.best_epoch = 0
+        self.ema = None
+        self.ema_alpha = ema_alpha
 
     def on_epoch_end(self, epoch, logs=None):
         logs = logs or {}
@@ -57,6 +59,9 @@ class PrecisionAtKCallback(Callback):
         idx = np.argsort(-y_pred)[: self.k]
         p_at_k = float(np.mean(self.y_val[idx] == 1))
         logs["val_p100"] = p_at_k
+        alpha = self.ema_alpha
+        self.ema = p_at_k if self.ema is None else alpha * p_at_k + (1 - alpha) * self.ema
+        logs["val_p100_ema"] = self.ema
         if p_at_k > self.best:
             self.best = p_at_k
             self.best_weights = self.model.get_weights()
@@ -70,6 +75,7 @@ class PrecisionAtKCallback(Callback):
 
 def build_model(input_dim, lr=8e-4, drop=0.35, l2_reg=1e-5, grad_clip=None):
     model = Sequential()
+    model.add(Dropout(0.10, input_shape=(input_dim,)))  # input dropout
     model.add(Dense(1024, input_dim=input_dim, activation="relu", kernel_regularizer=l2(l2_reg)))
     model.add(BatchNormalization())
     model.add(Dropout(drop))
@@ -88,7 +94,7 @@ def build_model(input_dim, lr=8e-4, drop=0.35, l2_reg=1e-5, grad_clip=None):
     if grad_clip is not None:
         opt_kwargs["clipnorm"] = grad_clip
     model.compile(
-        loss="binary_crossentropy",
+        loss=tf.keras.losses.BinaryCrossentropy(label_smoothing=0.01),
         optimizer=Adam(**opt_kwargs),
         metrics=[AUC(name="roc_auc"), AUC(curve="PR", name="pr_auc")],
     )
@@ -138,11 +144,13 @@ def train_one_seed(X, y, train_idx, val_idx, seed=42, k=100, lr=8e-4, grad_clip=
     x_tr, x_val = X[train_idx], X[val_idx]
     y_tr, y_val = y[train_idx], y[val_idx]
 
-    p100_cb = PrecisionAtKCallback(x_val, y_val, k=k)
+    p100_cb = PrecisionAtKCallback(x_val, y_val, k=k, ema_alpha=keras_lr * 500 if keras_lr <= 0.001 else 0.3)
     callbacks = [
         p100_cb,
-        EarlyStopping(monitor="val_p100", mode="max", patience=patience, restore_best_weights=False),
-        ReduceLROnPlateau(monitor="val_p100", mode="max", factor=0.5, patience=max(4, patience // 2), min_lr=1e-6),
+        EarlyStopping(monitor="val_p100_ema", mode="max", patience=patience, restore_best_weights=False),
+        ReduceLROnPlateau(
+            monitor="val_p100_ema", mode="max", factor=0.5, patience=max(4, patience // 2), min_lr=1e-6
+        ),
     ]
     cw = compute_class_weight(y_tr)
     model = build_model(input_dim=X.shape[1], lr=lr, grad_clip=grad_clip)
@@ -233,6 +241,7 @@ def main():
     keras_batch_size = cfg.get("keras_batch_size", 256)
     keras_max_epochs = cfg.get("keras_max_epochs", 200)
     keras_patience = cfg.get("keras_patience", 20)
+    keras_full_retrain_cap = cfg.get("keras_full_retrain_cap", 120)
     preds = []
     val_metrics = []
     for s in seeds:
@@ -256,13 +265,14 @@ def main():
         ef100 = enrichment_factor_at_k(y[val_idx], val_probs, 100)
         val_metrics.append({"seed": s, "precision@100": p100, "ef@100": ef100, "best_epoch": best_epoch})
 
-        # Retrain on full labeled data for final prediction using best_epoch
-        print(f"=== Retraining Keras seed {s} on full data for {best_epoch} epochs ===")
+        # Cap best_epoch to avoid pathological long runs
+        best_epoch_capped = min(best_epoch, keras_full_retrain_cap)
+        print(f"=== Retraining Keras seed {s} on full data for {best_epoch_capped} epochs ===")
         full_model = train_full_seed(
             X,
             y,
             seed=s,
-            epochs=best_epoch,
+            epochs=best_epoch_capped,
             lr=keras_lr,
             grad_clip=keras_grad_clip,
             batch_size=keras_batch_size,
