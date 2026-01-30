@@ -55,6 +55,7 @@ def run_cmd(cmd: List[str], cwd: Path, use_cuda: bool) -> None:
     env["PYTHONPATH"] = f"{patch_dir}{os.pathsep}{env.get('PYTHONPATH', '')}"
     # Workaround for PyTorch 2.6+ weights_only default change
     env.setdefault("PYTORCH_WEIGHTS_ONLY", "0")
+    env.setdefault("TORCH_LOAD_WEIGHTS_ONLY", "0")
     if not use_cuda:
         env["CUDA_VISIBLE_DEVICES"] = ""
     subprocess.run(cmd, check=True, cwd=str(cwd), env=env)
