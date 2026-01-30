@@ -12,7 +12,7 @@ Defaults:
 import argparse
 from pathlib import Path
 import pandas as pd
-from chem_utils import bemis_murcko_scaffold
+from chem_utils import bemis_murcko_scaffold, mol_from_smiles, morgan_fingerprint, FeaturizationConfig
 
 
 def main():
@@ -28,6 +28,12 @@ def main():
         type=int,
         default=0,
         help="Optional max compounds per Bemis–Murcko scaffold (0 disables).",
+    )
+    parser.add_argument(
+        "--diversity_lambda",
+        type=float,
+        default=0.0,
+        help="Greedy diversity penalty λ on max Tanimoto to selected (0 disables).",
     )
     parser.add_argument("--suffix", default="latest", help="Suffix for output filename.")
     parser.add_argument(
@@ -54,7 +60,47 @@ def main():
 
     top_k = max(1, min(args.top_k, len(df)))
     df = df.head(top_k).copy()
-    if args.scaffold_cap and args.scaffold_cap > 0:
+
+    if args.diversity_lambda > 0:
+        if "smiles" not in df.columns:
+            raise ValueError("Diversity mode requires a smiles column.")
+        # Precompute fingerprints
+        feat_cfg = FeaturizationConfig()
+        fps = []
+        for smi in df["smiles"]:
+            mol = mol_from_smiles(smi)
+            _, fp = morgan_fingerprint(mol, feat_cfg)
+            fps.append(fp)
+
+        selected = []
+        remaining = set(range(len(df)))
+        while len(selected) < top_k and remaining:
+            best_idx = None
+            best_util = -1e9
+            for idx in list(remaining):
+                score = df.iloc[idx]["score"] if "score" in df.columns else df.iloc[idx]["rank"] * -1
+                if not selected:
+                    util = score
+                else:
+                    sims = []
+                    for si in selected:
+                        fp_sel = fps[si]
+                        fp_cand = fps[idx]
+                        if fp_sel is None or fp_cand is None:
+                            sims.append(0.0)
+                        else:
+                            from rdkit import DataStructs
+
+                            sims.append(DataStructs.TanimotoSimilarity(fp_cand, fp_sel))
+                    max_sim = max(sims) if sims else 0.0
+                    util = score - args.diversity_lambda * max_sim
+                if util > best_util:
+                    best_util = util
+                    best_idx = idx
+            selected.append(best_idx)
+            remaining.remove(best_idx)
+        ids = df.iloc[selected][id_col].astype(str)
+    elif args.scaffold_cap and args.scaffold_cap > 0:
         df["scaffold"] = df["smiles"].apply(bemis_murcko_scaffold) if "smiles" in df.columns else ""
         kept = []
         counts = {}

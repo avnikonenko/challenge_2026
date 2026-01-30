@@ -40,6 +40,8 @@ Metrics summary aggregation runs by default; skip with `--skip-metrics-summary`.
 - Recompute consensus on selected prediction files:  
   `python consensus_select.py --rank_files outputs/predictions/rf_morgan_blind_ranked.csv outputs/predictions/chemprop_blind_ranked.csv --metrics_dir outputs/metrics --output_dir outputs/consensus_custom`
 - To include descriptors alongside Morgan in tree models: edit `train_models.py` and set `feature_sets = ["morgan", "descriptors"]`, then rerun `train_models.py` (featurize already writes both).
+- Greedy diversity export (score − λ·max_sim) instead of hard scaffold cap:  
+  `python select_top_compounds.py --rank_file outputs/consensus/ecr_consensus.csv --top_k 100 --diversity_lambda 0.3`
 - Split choice (Stage 1): `python choose_split_mode.py --train_csv TRAIN.csv --blind_csv BLIND.csv --out_json split_mode.json --smiles_col smiles`
 - Stage 2 runner enforcing the chosen split:  
   `python run_pipeline.py --train_csv TRAIN.csv --blind_csv BLIND.csv --split_mode_json split_mode.json [--chemprop] [--keras]`
