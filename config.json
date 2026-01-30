@@ -23,5 +23,10 @@
   "consensus_focus_k": 150,
   "consensus_metric": "precision@100",
   "consensus_weight_fallback": 1.0,
-  "split_mode_json": "split_mode.json"
+  "split_mode_json": "split_mode_json",
+  "keras_lr": 0.0006,
+  "keras_grad_clip": 1.0,
+  "keras_batch_size": 256,
+  "keras_max_epochs": 350,
+  "keras_patience": 35
 }
