@@ -1,0 +1,19 @@
+name: vscreen
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - rdkit
+  - pandas
+  - numpy
+  - scikit-learn
+  - scipy
+  - joblib
+  - xgboost
+  - lightgbm
+  - pyarrow
+  - fastparquet
+  - pip
+  - pip:
+      - chemprop
+      - tensorflow
