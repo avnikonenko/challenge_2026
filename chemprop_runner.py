@@ -15,6 +15,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 from typing import Dict, List
+from functools import lru_cache
 
 import numpy as np
 import pandas as pd
@@ -31,9 +32,28 @@ from chem_utils import (
 from split_choice import load_split_mode, make_split_indices
 
 
+@lru_cache(maxsize=1)
+def _numpy_patch_dir() -> Path:
+    tmpdir = Path(tempfile.mkdtemp(prefix="np_patch_"))
+    patch = tmpdir / "sitecustomize.py"
+    patch.write_text(
+        "import numpy as np\n"
+        "import warnings\n"
+        "if not hasattr(np, 'VisibleDeprecationWarning'):\n"
+        "    class VisibleDeprecationWarning(UserWarning):\n"
+        "        pass\n"
+        "    np.VisibleDeprecationWarning = VisibleDeprecationWarning\n",
+        encoding="utf-8",
+    )
+    return tmpdir
+
+
 def run_cmd(cmd: List[str], cwd: Path) -> None:
     print(f"[chemprop] {' '.join(cmd)}")
-    subprocess.run(cmd, check=True, cwd=str(cwd))
+    env = os.environ.copy()
+    patch_dir = _numpy_patch_dir()
+    env["PYTHONPATH"] = f"{patch_dir}{os.pathsep}{env.get('PYTHONPATH', '')}"
+    subprocess.run(cmd, check=True, cwd=str(cwd), env=env)
 
 
 def prepare_csv(df: pd.DataFrame, smiles_col: str, status_col: str, path: Path) -> None:

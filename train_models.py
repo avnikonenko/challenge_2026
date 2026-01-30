@@ -362,13 +362,18 @@ def main(config_path: str) -> None:
             save_metrics(metrics_path, metrics)
 
             # Save ranked predictions
+            pred_path = os.path.join(pred_dir, f"{tag}_blind_ranked.csv")
+            # Skip heavy retrain if predictions already exist
+            if os.path.exists(pred_path):
+                print(f"[train_models] Skipping {tag}: found existing predictions at {pred_path}")
+                continue
+
             pred_df = blind_meta.copy()
             # Retrain on full data for final scoring
             full_blind_probs, full_model = fit_full_model(base_model, X, y, blind_X)
             pred_df["score"] = full_blind_probs
             pred_df = pred_df.sort_values(by="score", ascending=False).reset_index(drop=True)
             pred_df.insert(0, "rank", pred_df.index + 1)
-            pred_path = os.path.join(pred_dir, f"{tag}_blind_ranked.csv")
             pred_df.to_csv(pred_path, index=False)
 
             # Persist calibrated model
