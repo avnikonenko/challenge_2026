@@ -198,7 +198,7 @@ def choose_split_strategy(train_df: pd.DataFrame, blind_df: pd.DataFrame, config
     smiles_col = config.get("smiles_col", "smiles")
     radius = int(config.get("radius", 2))
     n_bits = int(config.get("n_bits", 2048))
-    cluster_thresholds = config.get("cluster_thresholds", [0.70, 0.60])
+    cluster_thresholds = config.get("cluster_thresholds", [0.70, 0.50])
 
     mode, smiles_col = get_feature_mode(train_df, config)
     if mode != "smiles":
