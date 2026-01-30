@@ -37,6 +37,8 @@ from chem_utils import (
 )
 from split_choice import load_split_mode, make_split_indices
 
+# global skip flags populated from CLI
+_skip_flags = {"rf": False, "xgb": False, "lgbm": False, "hgb": False}
 
 def load_feature_set(
     feat_dir: str,
@@ -91,81 +93,85 @@ def load_feature_set(
     return X, y, meta, feat_cols, blind_X, blind_meta
 
 
-def build_models(seed: int) -> List[Tuple[str, object]]:
+def build_models(seed: int, allow_rf: bool = True, allow_xgb: bool = True, allow_lgbm: bool = True, allow_hgb: bool = True) -> List[Tuple[str, object]]:
     models: List[Tuple[str, object]] = []
     # Random Forest
-    models.append(
-        (
-            "rf",
-            RandomForestClassifier(
-                n_estimators=500,
-                max_depth=None,
-                n_jobs=-1,
-                class_weight="balanced",
-                random_state=seed,
-            ),
+    if allow_rf:
+        models.append(
+            (
+                "rf",
+                RandomForestClassifier(
+                    n_estimators=500,
+                    max_depth=None,
+                    n_jobs=-1,
+                    class_weight="balanced",
+                    random_state=seed,
+                ),
+            )
         )
-    )
 
     # Gradient boosting via xgboost / lightgbm if available.
-    try:
-        import xgboost as xgb  # type: ignore
+    if allow_xgb:
+        try:
+            import xgboost as xgb  # type: ignore
 
-        models.append(
-            (
-                "xgb",
-                xgb.XGBClassifier(
-                    n_estimators=600,
-                    max_depth=6,
-                    learning_rate=0.05,
-                    subsample=0.8,
-                    colsample_bytree=0.8,
-                    objective="binary:logistic",
-                    eval_metric="logloss",
-                    tree_method="hist",
-                    random_state=seed,
-                    n_jobs=-1,
-                ),
+            models.append(
+                (
+                    "xgb",
+                    xgb.XGBClassifier(
+                        n_estimators=600,
+                        max_depth=6,
+                        learning_rate=0.05,
+                        subsample=0.8,
+                        colsample_bytree=0.8,
+                        objective="binary:logistic",
+                        eval_metric="logloss",
+                        tree_method="hist",
+                        random_state=seed,
+                        n_jobs=-1,
+                    ),
+                )
             )
-        )
-    except Exception:
-        pass
+        except Exception:
+            pass
 
-    try:
-        from lightgbm import LGBMClassifier  # type: ignore
+    if allow_lgbm:
+        try:
+            from lightgbm import LGBMClassifier  # type: ignore
 
-        models.append(
-            (
-                "lgbm",
-                LGBMClassifier(
-                    n_estimators=800,
-                    learning_rate=0.05,
-                    max_depth=-1,
-                    num_leaves=63,
-                    subsample=0.8,
-                    colsample_bytree=0.8,
-                    objective="binary",
-                    n_jobs=-1,
-                    random_state=seed,
-                ),
+            models.append(
+                (
+                    "lgbm",
+                    LGBMClassifier(
+                        n_estimators=800,
+                        learning_rate=0.05,
+                        max_depth=-1,
+                        num_leaves=63,
+                        subsample=0.8,
+                        colsample_bytree=0.8,
+                        objective="binary",
+                        n_jobs=-1,
+                        random_state=seed,
+                    ),
+                )
             )
-        )
-    except Exception:
-        pass
+        except Exception:
+            pass
 
     # Scikit-learn hist gradient boosting as fallback boosting option.
-    models.append(
-        (
-            "hgb",
-            HistGradientBoostingClassifier(
-                max_depth=8,
-                learning_rate=0.05,
-                max_iter=500,
-                random_state=seed,
-                class_weight={0: 1.0, 1: 2.0},
-            ),
+    if allow_hgb:
+        models.append(
+            (
+                "hgb",
+                HistGradientBoostingClassifier(
+                    max_depth=8,
+                    learning_rate=0.05,
+                    max_iter=500,
+                    random_state=seed,
+                    class_weight={0: 1.0, 1: 2.0},
+                ),
+            )
         )
-    )
 
     return models
 
@@ -314,7 +320,20 @@ def main(config_path: str) -> None:
             if not splits:
                 splits = [(np.arange(len(y)), np.array([], dtype=int))]
 
-        for model_tag, base_model in build_models(seed):
+        models_to_run = build_models(
+            seed,
+            allow_rf=not _skip_flags["rf"],
+            allow_xgb=not _skip_flags["xgb"],
+            allow_lgbm=not _skip_flags["lgbm"],
+            allow_hgb=not _skip_flags["hgb"],
+        )
+        if not models_to_run:
+            raise ValueError("All models were skipped. Enable at least one model to train.")
+
+        model_names = [m[0] for m in models_to_run]
+        print(f"Models to run on {feat_kind}: {', '.join(model_names)}")
+
+        for model_tag, base_model in models_to_run:
             tag = f"{model_tag}_{feat_kind}"
             split_label = split_mode["chosen_strategy"] if split_mode else "scaffold_cv"
             print(f"Training {tag} with {split_label} ({len(splits)} folds)")
@@ -370,5 +389,17 @@ def main(config_path: str) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, default="config.json")
+    parser.add_argument("--skip-rf", action="store_true", help="Skip RandomForest model.")
+    parser.add_argument("--skip-xgb", action="store_true", help="Skip XGBoost model.")
+    parser.add_argument("--skip-lgbm", action="store_true", help="Skip LightGBM model.")
+    parser.add_argument("--skip-hgb", action="store_true", help="Skip HistGradientBoosting model.")
     args = parser.parse_args()
+    _skip_flags.update(
+        {
+            "rf": args.skip_rf,
+            "xgb": args.skip_xgb,
+            "lgbm": args.skip_lgbm,
+            "hgb": args.skip_hgb,
+        }
+    )
     main(args.config)

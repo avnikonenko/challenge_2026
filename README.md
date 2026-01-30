@@ -27,6 +27,7 @@ Metrics summary aggregation runs by default; skip with `--skip-metrics-summary`.
 - Featurize (Morgan + 2D): `python featurize.py --config config.json`
 - Similarity rank vs actives: `python similarity_rank.py --config config.json`
 - Train + predict (scaffold CV, calibrated RF/XGB/LGBM/HGB with full-data retrain): `python train_models.py --config config.json`
+- You can skip specific tree models to save time: add any of `--skip-rf --skip-xgb --skip-lgbm --skip-hgb` (at least one model must remain).
 - Chemprop D-MPNN ensemble (with Morgan bits, full-data ensemble seeds; default ensemble=5 for time budget): `python chemprop_runner.py --config config.json`
 - Keras dense baseline on Morgan bits (split for metrics, full-data retrain for scoring): `python nn_keras.py --config config.json`
 - Consensus/ECR (smoothed weights using precision@20/100 or EF@100): `python consensus.py --config config.json`
