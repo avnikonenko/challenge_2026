@@ -96,6 +96,7 @@ def train_fold(
     class_balance: bool,
     use_cuda: bool,
 ) -> Path:
+    save_dir_abs = save_dir.resolve()
     cmd = [
         "chemprop_train",
         "--data_path",
@@ -105,7 +106,7 @@ def train_fold(
         "--dataset_type",
         "classification",
         "--save_dir",
-        str(save_dir),
+        str(save_dir_abs),
         "--metric",
         "prc-auc",
         "--extra_metrics",
@@ -133,10 +134,10 @@ def train_fold(
         cmd.extend(["--features_generator", "rdkit_2d_normalized"])
     if not use_cuda:
         cmd.append("--no_cuda")
-    run_cmd(cmd, save_dir, use_cuda=use_cuda)
+    run_cmd(cmd, Path.cwd(), use_cuda=use_cuda)
     # Return checkpoint path
     # Chemprop versions differ in checkpoint layout; search recursively.
-    ckpt = next(save_dir.rglob("*.pt"), None)
+    ckpt = next(save_dir_abs.rglob("*.pt"), None)
     if ckpt is None:
         raise RuntimeError(f"No checkpoint found in {save_dir}")
     return ckpt
@@ -159,7 +160,6 @@ def predict(
         str(data_csv),
         "--preds_path",
         str(out_csv),
-        "--quiet",
         "--features_generator",
         "morgan",
     ]
@@ -167,7 +167,7 @@ def predict(
         cmd.extend(["--features_generator", "rdkit_2d_normalized"])
     if not use_cuda:
         cmd.append("--no_cuda")
-    run_cmd(cmd, out_csv.parent, use_cuda=use_cuda)
+    run_cmd(cmd, Path.cwd(), use_cuda=use_cuda)
 
 
 def evaluate_fold(preds: pd.DataFrame, labels: pd.Series, eval_topk: List[int], bedroc_alpha: float) -> Dict[str, float]:
@@ -344,6 +344,7 @@ def main(config_path: str) -> None:
         full_ckpts: List[Path] = []
         for i in range(ensemble_size):
             seed_i = seed + 100 + i  # offset seeds for diversity
+            run_dir = (full_dir / f"ensemble_{i}").resolve()
             cmd = [
                 "chemprop_train",
                 "--data_path",
@@ -351,7 +352,7 @@ def main(config_path: str) -> None:
                 "--dataset_type",
                 "classification",
                 "--save_dir",
-                str(full_dir / f"ensemble_{i}"),
+                str(run_dir),
                 "--metric",
                 "prc-auc",
                 "--extra_metrics",
@@ -382,8 +383,8 @@ def main(config_path: str) -> None:
                 cmd.append("--class_balance")
             if not chemprop_use_cuda:
                 cmd.append("--no_cuda")
-            run_cmd(cmd, full_dir, use_cuda=chemprop_use_cuda)
-            ckpt_path = next((full_dir / f"ensemble_{i}").rglob("*.pt"), None)
+            run_cmd(cmd, Path.cwd(), use_cuda=chemprop_use_cuda)
+            ckpt_path = next(run_dir.rglob("*.pt"), None)
             if ckpt_path:
                 full_ckpts.append(ckpt_path)
 
