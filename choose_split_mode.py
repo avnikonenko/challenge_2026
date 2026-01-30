@@ -49,7 +49,7 @@ def main():
     chosen, report = choose_split_strategy(train_df, blind_df, config)
 
     # Secondary evaluation with cluster_group_t0.60 for robustness (kept alongside primary)
-    secondary_strategy = "cluster_group_t0.60"
+    secondary_strategy = "cluster_group_t0.50"
     report["secondary_strategy"] = secondary_strategy
 
     # Print diagnostics

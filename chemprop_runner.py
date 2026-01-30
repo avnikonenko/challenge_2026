@@ -48,11 +48,13 @@ def _numpy_patch_dir() -> Path:
     return tmpdir
 
 
-def run_cmd(cmd: List[str], cwd: Path) -> None:
+def run_cmd(cmd: List[str], cwd: Path, use_cuda: bool) -> None:
     print(f"[chemprop] {' '.join(cmd)}")
     env = os.environ.copy()
     patch_dir = _numpy_patch_dir()
     env["PYTHONPATH"] = f"{patch_dir}{os.pathsep}{env.get('PYTHONPATH', '')}"
+    if not use_cuda:
+        env["CUDA_VISIBLE_DEVICES"] = ""
     subprocess.run(cmd, check=True, cwd=str(cwd), env=env)
 
 
@@ -72,6 +74,7 @@ def train_fold(
     morgan_bits: int,
     init_lr: float,
     class_balance: bool,
+    use_cuda: bool,
 ) -> Path:
     cmd = [
         "chemprop_train",
@@ -108,7 +111,9 @@ def train_fold(
     if use_rdkit_desc:
         # Append RDKit 2D features in addition to Morgan bits
         cmd.extend(["--features_generator", "rdkit_2d_normalized"])
-    run_cmd(cmd, save_dir)
+    if not use_cuda:
+        cmd.append("--no_cuda")
+    run_cmd(cmd, save_dir, use_cuda=use_cuda)
     # Return checkpoint path
     # Chemprop versions differ in checkpoint layout; search recursively.
     ckpt = next(save_dir.rglob("*.pt"), None)
@@ -124,6 +129,7 @@ def predict(
     use_rdkit_desc: bool,
     morgan_radius: int,
     morgan_bits: int,
+    use_cuda: bool,
 ) -> None:
     cmd = [
         "chemprop_predict",
@@ -143,7 +149,9 @@ def predict(
     ]
     if use_rdkit_desc:
         cmd.extend(["--features_generator", "rdkit_2d_normalized"])
-    run_cmd(cmd, out_csv.parent)
+    if not use_cuda:
+        cmd.append("--no_cuda")
+    run_cmd(cmd, out_csv.parent, use_cuda=use_cuda)
 
 
 def evaluate_fold(preds: pd.DataFrame, labels: pd.Series, eval_topk: List[int], bedroc_alpha: float) -> Dict[str, float]:
@@ -177,11 +185,12 @@ def ensemble_predict(
     use_rdkit_desc: bool,
     morgan_radius: int,
     morgan_bits: int,
+    use_cuda: bool,
 ) -> pd.DataFrame:
     all_preds = []
     for ckpt in checkpoints:
         tmp_path = blind_csv.parent / f"pred_{ckpt.stem}.csv"
-        predict(ckpt, blind_csv, tmp_path, use_rdkit_desc, morgan_radius, morgan_bits)
+        predict(ckpt, blind_csv, tmp_path, use_rdkit_desc, morgan_radius, morgan_bits, use_cuda)
         df = pd.read_csv(tmp_path)
         all_preds.append(df["prediction"].to_numpy())
     mean_probs = np.mean(np.vstack(all_preds), axis=0)
@@ -215,6 +224,7 @@ def main(config_path: str) -> None:
     morgan_bits = cfg.get("chemprop_morgan_bits", 2048)
     chemprop_lr = float(cfg.get("chemprop_lr", 5e-4))
     chemprop_class_balance = bool(cfg.get("chemprop_class_balance", True))
+    chemprop_use_cuda = bool(cfg.get("chemprop_use_cuda", False))
     split_mode_json = cfg.get("split_mode_json", None)
     if split_mode_json and not os.path.exists(split_mode_json):
         raise FileNotFoundError(f"split_mode_json specified but not found: {split_mode_json}")
@@ -288,6 +298,7 @@ def main(config_path: str) -> None:
             morgan_bits,
             chemprop_lr,
             chemprop_class_balance,
+            chemprop_use_cuda,
         )
         split_checkpoints.append(ckpt)
 
@@ -353,7 +364,9 @@ def main(config_path: str) -> None:
                 cmd.extend(["--features_generator", "rdkit_2d_normalized"])
             if chemprop_class_balance:
                 cmd.append("--class_balance")
-            run_cmd(cmd, full_dir)
+            if not chemprop_use_cuda:
+                cmd.append("--no_cuda")
+            run_cmd(cmd, full_dir, use_cuda=chemprop_use_cuda)
             ckpt_path = next((full_dir / f"ensemble_{i}").rglob("*.pt"), None)
             if ckpt_path:
                 full_ckpts.append(ckpt_path)
@@ -362,7 +375,7 @@ def main(config_path: str) -> None:
             # Fallback to original checkpoint if full retrain failed
             full_ckpts = split_checkpoints[:ensemble_size]
 
-        pred_df = ensemble_predict(full_ckpts, blind_csv, use_rdkit_desc, morgan_radius, morgan_bits)
+        pred_df = ensemble_predict(full_ckpts, blind_csv, use_rdkit_desc, morgan_radius, morgan_bits, chemprop_use_cuda)
         pred_df[name_col] = blind_df[name_col].values
         pred_df = pred_df.sort_values(by="score", ascending=False).reset_index(drop=True)
         pred_df.insert(0, "rank", pred_df.index + 1)
