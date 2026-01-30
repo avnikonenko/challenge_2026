@@ -70,6 +70,8 @@ def train_fold(
     use_rdkit_desc: bool,
     morgan_radius: int,
     morgan_bits: int,
+    lr: float,
+    class_balance: bool,
 ) -> Path:
     cmd = [
         "chemprop_train",
@@ -86,7 +88,7 @@ def train_fold(
         "--extra_metrics",
         "auc",
         "--split_type",
-        "scaffold",
+        "scaffold_balanced",
         "--epochs",
         "40",
         "--batch_size",
@@ -102,7 +104,11 @@ def train_fold(
         str(morgan_radius),
         "--morgan_num_bits",
         str(morgan_bits),
+        "--lr",
+        str(lr),
     ]
+    if class_balance:
+        cmd.append("--class_balance")
     if use_rdkit_desc:
         # Append RDKit 2D features in addition to Morgan bits
         cmd.extend(["--features_generator", "rdkit_2d_normalized"])
@@ -211,6 +217,8 @@ def main(config_path: str) -> None:
     ensemble_size = cfg.get("chemprop_ensemble", 5)
     morgan_radius = cfg.get("chemprop_morgan_radius", 2)
     morgan_bits = cfg.get("chemprop_morgan_bits", 2048)
+    chemprop_lr = float(cfg.get("chemprop_lr", 5e-4))
+    chemprop_class_balance = bool(cfg.get("chemprop_class_balance", True))
     split_mode_json = cfg.get("split_mode_json", None)
     if split_mode_json and not os.path.exists(split_mode_json):
         raise FileNotFoundError(f"split_mode_json specified but not found: {split_mode_json}")
@@ -282,6 +290,8 @@ def main(config_path: str) -> None:
             use_rdkit_desc,
             morgan_radius,
             morgan_bits,
+            chemprop_lr,
+            chemprop_class_balance,
         )
         split_checkpoints.append(ckpt)
 
@@ -324,7 +334,7 @@ def main(config_path: str) -> None:
                 "--extra_metrics",
                 "roc-auc",
                 "--split_type",
-                "scaffold",
+                "scaffold_balanced",
                 "--split_sizes",
                 "1.0",
                 "0.0",
@@ -344,9 +354,13 @@ def main(config_path: str) -> None:
                 str(morgan_radius),
                 "--morgan_num_bits",
                 str(morgan_bits),
+                "--lr",
+                str(chemprop_lr),
             ]
             if use_rdkit_desc:
                 cmd.extend(["--features_generator", "rdkit_2d_normalized"])
+            if chemprop_class_balance:
+                cmd.append("--class_balance")
             run_cmd(cmd, full_dir)
             ckpt_path = next((full_dir / f"ensemble_{i}").rglob("*.pt"), None)
             if ckpt_path:

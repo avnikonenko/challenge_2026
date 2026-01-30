@@ -144,7 +144,8 @@ def train_one_seed(X, y, train_idx, val_idx, seed=42, k=100, lr=8e-4, grad_clip=
     x_tr, x_val = X[train_idx], X[val_idx]
     y_tr, y_val = y[train_idx], y[val_idx]
 
-    p100_cb = PrecisionAtKCallback(x_val, y_val, k=k, ema_alpha=keras_lr * 500 if keras_lr <= 0.001 else 0.3)
+    ema_alpha = lr * 500 if lr <= 0.001 else 0.3
+    p100_cb = PrecisionAtKCallback(x_val, y_val, k=k, ema_alpha=ema_alpha)
     callbacks = [
         p100_cb,
         EarlyStopping(monitor="val_p100_ema", mode="max", patience=patience, restore_best_weights=False),
