@@ -263,6 +263,7 @@ def main(config_path: str) -> None:
     chemprop_lr = float(cfg.get("chemprop_lr", 5e-4))
     chemprop_class_balance = bool(cfg.get("chemprop_class_balance", True))
     chemprop_use_cuda = bool(cfg.get("chemprop_use_cuda", False))
+    chemprop_predict_only = bool(cfg.get("chemprop_predict_only", False))
     split_mode_json = cfg.get("split_mode_json", None)
     if split_mode_json and not os.path.exists(split_mode_json):
         raise FileNotFoundError(f"split_mode_json specified but not found: {split_mode_json}")
@@ -306,6 +307,9 @@ def main(config_path: str) -> None:
 
     fold_metrics = []
     split_checkpoints: List[Path] = []
+    full_dir = (out_dir / "chemprop" / "full_train").resolve()
+    existing_full_ckpts = list(full_dir.rglob("*.pt")) if full_dir.exists() else []
+    have_full_ckpts = len(existing_full_ckpts) >= ensemble_size
 
     with tempfile.TemporaryDirectory() as tmpdir_str:
         tmpdir = Path(tmpdir_str)
@@ -313,102 +317,108 @@ def main(config_path: str) -> None:
         blind_csv = tmpdir / "blind.csv"
         blind_df[["smiles"]].to_csv(blind_csv, index=False)
 
-        fold_id = 0
-        fold_dir = chemprop_dir / "split_eval" / f"seed_{seed}"
-        if fold_dir.exists():
-            # Avoid stale checkpoints from prior runs
-            for old in fold_dir.rglob("*.pt"):
-                old.unlink()
-        fold_dir.mkdir(parents=True, exist_ok=True)
-        train_csv = tmpdir / "train_split.csv"
-        val_csv = tmpdir / "val_split.csv"
-        # Always train Chemprop on numeric target column
-        prepare_csv(known_df.iloc[train_idx], smiles_col, "target", train_csv)
-        prepare_csv(known_df.iloc[val_idx], smiles_col, "target", val_csv)
+        if chemprop_predict_only and have_full_ckpts:
+            print("[chemprop] predict_only enabled and existing checkpoints found; skipping training/metrics.")
+        else:
+            fold_id = 0
+            fold_dir = chemprop_dir / "split_eval" / f"seed_{seed}"
+            if fold_dir.exists():
+                # Avoid stale checkpoints from prior runs
+                for old in fold_dir.rglob("*.pt"):
+                    old.unlink()
+            fold_dir.mkdir(parents=True, exist_ok=True)
+            train_csv = tmpdir / "train_split.csv"
+            val_csv = tmpdir / "val_split.csv"
+            # Always train Chemprop on numeric target column
+            prepare_csv(known_df.iloc[train_idx], smiles_col, "target", train_csv)
+            prepare_csv(known_df.iloc[val_idx], smiles_col, "target", val_csv)
 
-        ckpt = train_fold(
-            train_csv,
-            val_csv,
-            fold_dir,
-            seed + fold_id,
-            use_rdkit_desc,
-            morgan_radius,
-            morgan_bits,
-            chemprop_lr,
-            chemprop_class_balance,
-            chemprop_use_cuda,
-        )
-        split_checkpoints.append(ckpt)
+            ckpt = train_fold(
+                train_csv,
+                val_csv,
+                fold_dir,
+                seed + fold_id,
+                use_rdkit_desc,
+                morgan_radius,
+                morgan_bits,
+                chemprop_lr,
+                chemprop_class_balance,
+                chemprop_use_cuda,
+            )
+            split_checkpoints.append(ckpt)
 
-        pred_csv = tmpdir / "valpred_split.csv"
-        predict(ckpt, val_csv, pred_csv, use_rdkit_desc, morgan_radius, morgan_bits, chemprop_use_cuda)
-        preds = pd.read_csv(pred_csv)
-        metrics = evaluate_fold(preds, known_df.iloc[val_idx]["target"], eval_topk, bedroc_alpha)
-        metrics["split_strategy"] = split_mode["chosen_strategy"] if split_mode else "random_stratified"
-        fold_metrics.append(metrics)
+            pred_csv = tmpdir / "valpred_split.csv"
+            predict(ckpt, val_csv, pred_csv, use_rdkit_desc, morgan_radius, morgan_bits, chemprop_use_cuda)
+            preds = pd.read_csv(pred_csv)
+            metrics = evaluate_fold(preds, known_df.iloc[val_idx]["target"], eval_topk, bedroc_alpha)
+            metrics["split_strategy"] = split_mode["chosen_strategy"] if split_mode else "random_stratified"
+            fold_metrics.append(metrics)
 
-        metrics_df = pd.DataFrame(fold_metrics)
-        mean_metrics = metrics_df.mean(numeric_only=True).to_dict()
-        metrics_path = metrics_dir / "chemprop_cv.json"
-        with open(metrics_path, "w", encoding="utf-8") as f:
-            json.dump(mean_metrics, f, indent=2)
-        print(f"[chemprop] Split metrics -> {metrics_path}")
+            metrics_df = pd.DataFrame(fold_metrics)
+            mean_metrics = metrics_df.mean(numeric_only=True).to_dict()
+            metrics_path = metrics_dir / "chemprop_cv.json"
+            with open(metrics_path, "w", encoding="utf-8") as f:
+                json.dump(mean_metrics, f, indent=2)
+            print(f"[chemprop] Split metrics -> {metrics_path}")
 
         # Retrain ensemble on full labeled data for final scoring
-        full_dir = chemprop_dir / "full_train"
-        if full_dir.exists():
-            for old in full_dir.rglob("*.pt"):
-                old.unlink()
-        full_dir.mkdir(parents=True, exist_ok=True)
-        full_train_csv = tmpdir / "train_full.csv"
-        prepare_csv(known_df, smiles_col, "target", full_train_csv)
-
         full_ckpts: List[Path] = []
-        for i in range(ensemble_size):
-            seed_i = seed + 100 + i  # offset seeds for diversity
-            run_dir = (full_dir / f"ensemble_{i}").resolve()
-            cmd = [
-                "chemprop_train",
-                "--data_path",
-                str(full_train_csv),
-                "--dataset_type",
-                "classification",
-                "--save_dir",
-                str(run_dir),
-                "--metric",
-                "prc-auc",
-                "--extra_metrics",
-                "roc-auc",
-                "--split_type",
-                "scaffold_balanced",
-                "--split_sizes",
-                "1.0",
-                "0.0",
-                "0.0",
-                "--epochs",
-                "40",
-                "--batch_size",
-                "64",
-                "--ensemble_size",
-                "1",
-                "--seed",
-                str(seed_i),
-                "--quiet",
-                "--features_generator",
-                "morgan",
-                "--init_lr",
-                str(chemprop_lr),
-            ]
-            if use_rdkit_desc:
-                cmd.extend(["--features_generator", "rdkit_2d_normalized"])
-            if chemprop_class_balance:
-                cmd.append("--class_balance")
-            if not chemprop_use_cuda:
-                cmd.append("--no_cuda")
-            run_cmd(cmd, Path.cwd(), use_cuda=chemprop_use_cuda)
-            ckpt_path = next(run_dir.rglob("*.pt"), None)
-            if ckpt_path:
-                full_ckpts.append(ckpt_path)
+        if have_full_ckpts:
+            full_ckpts = existing_full_ckpts[:ensemble_size]
+            print(f"[chemprop] Reusing existing full-train checkpoints ({len(full_ckpts)})")
+        else:
+            if full_dir.exists():
+                for old in full_dir.rglob("*.pt"):
+                    old.unlink()
+            full_dir.mkdir(parents=True, exist_ok=True)
+            full_train_csv = tmpdir / "train_full.csv"
+            prepare_csv(known_df, smiles_col, "target", full_train_csv)
+
+            for i in range(ensemble_size):
+                seed_i = seed + 100 + i  # offset seeds for diversity
+                run_dir = (full_dir / f"ensemble_{i}").resolve()
+                cmd = [
+                    "chemprop_train",
+                    "--data_path",
+                    str(full_train_csv),
+                    "--dataset_type",
+                    "classification",
+                    "--save_dir",
+                    str(run_dir),
+                    "--metric",
+                    "prc-auc",
+        "--extra_metrics",
+        "auc",
+                    "--split_type",
+                    "scaffold_balanced",
+                    "--split_sizes",
+                    "1.0",
+                    "0.0",
+                    "0.0",
+                    "--epochs",
+                    "40",
+                    "--batch_size",
+                    "64",
+                    "--ensemble_size",
+                    "1",
+                    "--seed",
+                    str(seed_i),
+                    "--quiet",
+                    "--features_generator",
+                    "morgan",
+                    "--init_lr",
+                    str(chemprop_lr),
+                ]
+                if use_rdkit_desc:
+                    cmd.extend(["--features_generator", "rdkit_2d_normalized"])
+                if chemprop_class_balance:
+                    cmd.append("--class_balance")
+                if not chemprop_use_cuda:
+                    cmd.append("--no_cuda")
+                run_cmd(cmd, Path.cwd(), use_cuda=chemprop_use_cuda)
+                ckpt_path = next(run_dir.rglob("*.pt"), None)
+                if ckpt_path:
+                    full_ckpts.append(ckpt_path)
 
         if not full_ckpts:
             # Fallback to original checkpoint if full retrain failed
