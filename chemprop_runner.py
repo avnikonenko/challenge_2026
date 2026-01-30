@@ -172,7 +172,18 @@ def predict(
 
 def evaluate_fold(preds: pd.DataFrame, labels: pd.Series, eval_topk: List[int], bedroc_alpha: float) -> Dict[str, float]:
     y_true = labels.to_numpy()
-    y_score = preds["prediction"].to_numpy()
+    # Determine prediction column
+    pred_col = None
+    for c in ["prediction", "pred", "target", "value"]:
+        if c in preds.columns:
+            pred_col = c
+            break
+    if pred_col is None:
+        non_smiles = [c for c in preds.columns if c.lower() not in {"smiles", "index"}]
+        if not non_smiles:
+            raise ValueError("No prediction column found in chemprop output.")
+        pred_col = non_smiles[0]
+    y_score = preds[pred_col].to_numpy()
     metrics: Dict[str, float] = {}
     # PR-AUC
     try:
@@ -208,7 +219,18 @@ def ensemble_predict(
         tmp_path = blind_csv.parent / f"pred_{ckpt.stem}.csv"
         predict(ckpt, blind_csv, tmp_path, use_rdkit_desc, morgan_radius, morgan_bits, use_cuda)
         df = pd.read_csv(tmp_path)
-        all_preds.append(df["prediction"].to_numpy())
+        # pick prediction column
+        pred_col = None
+        for c in ["prediction", "pred", "target", "value"]:
+            if c in df.columns:
+                pred_col = c
+                break
+        if pred_col is None:
+            non_smiles = [c for c in df.columns if c.lower() not in {"smiles", "index"}]
+            if not non_smiles:
+                raise ValueError("No prediction column found in chemprop prediction output.")
+            pred_col = non_smiles[0]
+        all_preds.append(df[pred_col].to_numpy())
     mean_probs = np.mean(np.vstack(all_preds), axis=0)
     result = pd.read_csv(blind_csv).copy()
     result["score"] = mean_probs
