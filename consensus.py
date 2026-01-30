@@ -98,6 +98,24 @@ def main(config_path: str) -> None:
     focus_k = int(cfg.get("consensus_focus_k", 100))
     metric_key = cfg.get("consensus_metric", "precision@100")
     weight_fallback = float(cfg.get("consensus_weight_fallback", 1.0))
+    # Optional robustness weight using secondary split metrics if present
+    robustness_suffix = cfg.get("secondary_split_suffix", "_cluster_t0.60")
+    # Preference for calibrated models in OOD (low similarity) regimes
+    split_mode_path = cfg.get("split_mode_json", None)
+    ood_pref_factor = 1.0
+    if split_mode_path and Path(split_mode_path).exists():
+        try:
+            split_info = load_config(split_mode_path)
+            t2b = split_info.get("report", {}).get("train_to_blind", {})
+            q50 = float(t2b.get("q50", 1.0))
+            # If median train→blind similarity is low, treat as OOD and favor calibrated models.
+            if q50 < 0.4:
+                ood_pref_factor = 1.15
+            elif q50 < 0.55:
+                ood_pref_factor = 1.05
+        except Exception:
+            ood_pref_factor = 1.0
+    calibrated_models = {"rf", "xgb", "lgbm", "hgb"}
 
     frames: List[pd.DataFrame] = []
 
@@ -112,35 +130,59 @@ def main(config_path: str) -> None:
         # Load validation weight
         metrics_path = output_dir / "metrics" / f"{model_name}_cv.json"
         weight = weight_fallback
+        base_metric = None
         if metrics_path.exists():
             try:
                 m = load_config(metrics_path)
-                # Smoothed weighting: prefer average of precision@20 and precision@100, else EF@100, else metric_key/pr_auc.
                 if "precision@20" in m and "precision@100" in m:
-                    weight = float((m["precision@20"] + m["precision@100"]) / 2.0)
+                    base_metric = float((m["precision@20"] + m["precision@100"]) / 2.0)
                 elif "ef@100" in m:
-                    weight = float(m["ef@100"])
+                    base_metric = float(m["ef@100"])
                 else:
-                    weight = float(m.get(metric_key, m.get("pr_auc", weight_fallback)))
+                    base_metric = float(m.get(metric_key, m.get("pr_auc", weight_fallback)))
             except Exception:
-                weight = weight_fallback
+                base_metric = None
         elif model_name == "chemprop":
             metrics_path = output_dir / "metrics" / "chemprop_cv.json"
             if metrics_path.exists():
                 try:
                     m = load_config(metrics_path)
                     if "precision@20" in m and "precision@100" in m:
-                        weight = float((m["precision@20"] + m["precision@100"]) / 2.0)
+                        base_metric = float((m["precision@20"] + m["precision@100"]) / 2.0)
                     elif "ef@100" in m:
-                        weight = float(m["ef@100"])
+                        base_metric = float(m["ef@100"])
                     else:
-                        weight = float(m.get(metric_key, m.get("pr_auc", weight_fallback)))
+                        base_metric = float(m.get(metric_key, m.get("pr_auc", weight_fallback)))
                 except Exception:
-                    weight = weight_fallback
+                    base_metric = None
+        # Secondary robustness metric (e.g., cluster_t0.60 CV)
+        secondary_path = output_dir / "metrics" / f"{model_name}{robustness_suffix}_cv.json"
+        robustness_metric = None
+        if secondary_path.exists():
+            try:
+                m2 = load_config(secondary_path)
+                if "precision@20" in m2 and "precision@100" in m2:
+                    robustness_metric = float((m2["precision@20"] + m2["precision@100"]) / 2.0)
+                elif "ef@100" in m2:
+                    robustness_metric = float(m2["ef@100"])
+                else:
+                    robustness_metric = float(m2.get(metric_key, m2.get("pr_auc", weight_fallback)))
+            except Exception:
+                robustness_metric = None
+
+        if base_metric is not None and robustness_metric is not None:
+            weight = 0.6 * base_metric + 0.4 * robustness_metric
+        elif base_metric is not None:
+            weight = base_metric
+        elif robustness_metric is not None:
+            weight = robustness_metric
+        # Calibrated preference in OOD: boost calibrated models, slightly damp others.
+        model_prefix = model_name.split("_")[0]
+        if ood_pref_factor != 1.0:
+            if model_prefix in calibrated_models:
+                weight *= ood_pref_factor
             else:
-                weight = weight_fallback
-        else:
-            weight = weight_fallback
+                weight *= max(0.85, 2 - ood_pref_factor)  # light penalty
         model_weights[model_name] = max(weight, 1e-6)
 
     # Include similarity ranking if present

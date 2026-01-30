@@ -84,20 +84,27 @@ def _murcko_groups(train_df: pd.DataFrame, smiles_col: str) -> np.ndarray:
 
 
 def _cluster_groups(train_fps: List[Optional[DataStructs.ExplicitBitVect]], cutoff: float) -> Optional[np.ndarray]:
-    fps = [fp for fp in train_fps if fp is not None]
-    if len(fps) != len(train_fps) or len(fps) == 0:
+    # Assign invalid fingerprints as singleton clusters instead of failing.
+    valid_indices = [i for i, fp in enumerate(train_fps) if fp is not None]
+    invalid_indices = [i for i, fp in enumerate(train_fps) if fp is None]
+    fps = [train_fps[i] for i in valid_indices]
+    if len(fps) == 0:
         return None
     n = len(fps)
     dists = []
     for i in range(1, n):
         sims = DataStructs.BulkTanimotoSimilarity(fps[i], fps[:i])
         dists.extend([1.0 - s for s in sims])
-    # RDKit Butina.ClusterData expects argument name distThresh (not cutoff).
     clusters = Butina.ClusterData(dists, nPts=n, distThresh=cutoff, isDistData=True)
-    cluster_ids = np.empty(n, dtype=int)
+    cluster_ids = np.empty(len(train_fps), dtype=int)
     for cid, members in enumerate(clusters):
         for m in members:
-            cluster_ids[m] = cid
+            cluster_ids[valid_indices[m]] = cid
+    # Assign unique cluster IDs to invalids
+    next_cid = len(clusters)
+    for inv_i in invalid_indices:
+        cluster_ids[inv_i] = next_cid
+        next_cid += 1
     return cluster_ids
 
 
@@ -247,9 +254,9 @@ def choose_split_strategy(train_df: pd.DataFrame, blind_df: pd.DataFrame, config
                 if strat_name == "random_stratified":
                     train_idx, val_idx = _random_stratified_split(train_df, y, test_size, seed)
                 elif strat_name == "murcko_group":
-                    train_idx, val_idx = _group_split(group_labels, test_size, seed)
+                    train_idx, val_idx = _group_stratified_split(group_labels, y, test_size, seed)
                 elif strat_name.startswith("cluster_group") and not cluster_failed:
-                    train_idx, val_idx = _group_split(group_labels, test_size, seed)
+                    train_idx, val_idx = _group_stratified_split(group_labels, y, test_size, seed)
                 else:
                     invalid += 1
                     continue
@@ -315,7 +322,11 @@ def make_split_indices(train_df: pd.DataFrame, chosen_strategy: str, config: Dic
     n_bits = int(config.get("n_bits", 2048))
     y_series = train_df[y_col]
     if y_series.dtype == object:
-        y_series = y_series.astype(str).str.lower().str.strip().map({"active": 1, "inactive": 0})
+        mapped = y_series.astype(str).str.lower().str.strip().map({"active": 1, "inactive": 0})
+        if mapped.isna().any():
+            unknown = y_series[mapped.isna()].unique()
+            raise ValueError(f"Unknown labels in y_col '{y_col}': {unknown}")
+        y_series = mapped
     y = y_series.to_numpy()
 
     if chosen_strategy == "random_stratified":

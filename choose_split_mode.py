@@ -4,6 +4,7 @@ Stage 1 runner: choose split mode based on train/blind similarity shift.
 """
 
 import argparse
+import numpy as np
 import pandas as pd
 
 from split_choice import choose_split_strategy, save_split_mode
@@ -17,9 +18,10 @@ def main():
     parser.add_argument("--out_json", default="split_mode.json")
     parser.add_argument("--smiles_col", default="smiles")
     parser.add_argument("--y_col", default="act")
+    # Defaults tuned for more stable diagnostics
     parser.add_argument("--test_size", type=float, default=0.2)
-    parser.add_argument("--repeats", type=int, default=10)
-    parser.add_argument("--random_state_base", type=int, default=42)
+    parser.add_argument("--repeats", type=int, default=20)
+    parser.add_argument("--random_state_base", type=int, default=2024)
     args = parser.parse_args()
 
     if args.train_csv.endswith(".smi"):
@@ -66,9 +68,16 @@ def main():
     try:
         # Blind cluster stats using same radius/bits
         blind_fps = build_fps_from_smiles(blind_df[args.smiles_col].tolist(), radius=config["radius"], n_bits=config["n_bits"])
-        # simple unique count proxy
-        report["blind_unique_fps"] = int(len([fp for fp in blind_fps if fp is not None]))
+        # Count valid and unique fingerprints
+        valid_fps = [fp for fp in blind_fps if fp is not None]
+        report["blind_valid_fps"] = int(len(valid_fps))
+        try:
+            bitstrings = [fp.ToBitString() for fp in valid_fps]
+            report["blind_unique_fps"] = int(len(set(bitstrings)))
+        except Exception:
+            report["blind_unique_fps"] = None
     except Exception:
+        report["blind_valid_fps"] = None
         report["blind_unique_fps"] = None
 
     # Split leakage stats: similarity of val to train for chosen split

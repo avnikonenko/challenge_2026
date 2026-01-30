@@ -63,11 +63,11 @@ def read_blind(path: str, smiles_col: str, name_col: str) -> pd.DataFrame:
         if smiles_col not in df.columns:
             raise ValueError(f"Missing required column '{smiles_col}' in blind set.")
         if name_col not in df.columns:
-            df[name_col] = df.index.astype(str)
+            df[name_col] = df.index.to_series().astype(str)
     df = df.dropna(subset=[smiles_col]).copy()
     if name_col != "name" and name_col in df.columns:
         df["name"] = df[name_col]
-    df["name"] = df["name"].fillna(df.index.astype(str))
+    df["name"] = df["name"].fillna(df.index.to_series().astype(str))
     return df
 
 

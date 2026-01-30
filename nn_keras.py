@@ -46,6 +46,7 @@ class PrecisionAtKCallback(Callback):
         self.k = k
         self.best = -1.0
         self.best_weights = None
+        self.best_epoch = 0
 
     def on_epoch_end(self, epoch, logs=None):
         logs = logs or {}
@@ -56,6 +57,7 @@ class PrecisionAtKCallback(Callback):
         if p_at_k > self.best:
             self.best = p_at_k
             self.best_weights = self.model.get_weights()
+            self.best_epoch = epoch + 1
         print(f" — val_p100: {p_at_k:.4f} (best {self.best:.4f})")
 
     def on_train_end(self, logs=None):
@@ -129,7 +131,7 @@ def train_one_seed(X, y, train_idx, val_idx, seed=42, k=100):
     ]
     cw = compute_class_weight(y_tr)
     model = build_model(input_dim=X.shape[1])
-    model.fit(
+    hist = model.fit(
         x_tr,
         y_tr,
         epochs=250,
@@ -139,10 +141,11 @@ def train_one_seed(X, y, train_idx, val_idx, seed=42, k=100):
         class_weight=cw,
         verbose=2,
     )
-    return model
+    best_epoch = p100_cb.best_epoch if p100_cb.best_epoch > 0 else len(hist.history.get("loss", []))
+    return model, best_epoch
 
 
-def train_full_seed(X, y, seed=42):
+def train_full_seed(X, y, seed=42, epochs=80):
     tf.random.set_seed(seed)
     np.random.seed(seed)
     cw = compute_class_weight(y)
@@ -151,7 +154,7 @@ def train_full_seed(X, y, seed=42):
     model.fit(
         X,
         y,
-        epochs=80,
+        epochs=epochs,
         batch_size=128,
         class_weight=cw,
         verbose=2,
@@ -214,16 +217,16 @@ def main():
     val_metrics = []
     for s in seeds:
         print(f"\n=== Training Keras seed {s} (val for metrics) ===")
-        model = train_one_seed(X, y, train_idx, val_idx, seed=s, k=100)
+        model, best_epoch = train_one_seed(X, y, train_idx, val_idx, seed=s, k=100)
         # evaluate on val split
         val_probs = model.predict(X[val_idx], verbose=0).ravel()
         p100 = precision_at_k(y[val_idx], val_probs, 100)
         ef100 = enrichment_factor_at_k(y[val_idx], val_probs, 100)
-        val_metrics.append({"seed": s, "precision@100": p100, "ef@100": ef100})
+        val_metrics.append({"seed": s, "precision@100": p100, "ef@100": ef100, "best_epoch": best_epoch})
 
-        # Retrain on full labeled data for final prediction
-        print(f"=== Retraining Keras seed {s} on full data for final scoring ===")
-        full_model = train_full_seed(X, y, seed=s)
+        # Retrain on full labeled data for final prediction using best_epoch
+        print(f"=== Retraining Keras seed {s} on full data for {best_epoch} epochs ===")
+        full_model = train_full_seed(X, y, seed=s, epochs=best_epoch)
         preds.append(full_model.predict(blind_X, verbose=0).ravel())
 
     mean_val = {k: float(np.mean([m[k] for m in val_metrics])) for k in ["precision@100", "ef@100"]}

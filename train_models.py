@@ -290,14 +290,29 @@ def main(config_path: str) -> None:
         )
         smiles = meta["smiles"].tolist()
 
-        # Scaffold-based CV splits (deterministic)
-        splits = scaffold_split_indices(smiles, n_folds=n_folds, seed=seed)
-        if not splits:
-            splits = [(np.arange(len(y)), np.array([], dtype=int))]
+        # Build CV splits: use chosen split_mode if provided, otherwise scaffold CV.
+        splits: List[Tuple[np.ndarray, np.ndarray]] = []
+        if split_mode:
+            cfg_used = split_mode.get("config_used", {})
+            strategy = split_mode["chosen_strategy"]
+            for r in range(n_folds):
+                splits.append(
+                    make_split_indices(
+                        known_df,
+                        strategy,
+                        cfg_used,
+                        seed + r,
+                    )
+                )
+        else:
+            splits = scaffold_split_indices(smiles, n_folds=n_folds, seed=seed)
+            if not splits:
+                splits = [(np.arange(len(y)), np.array([], dtype=int))]
 
         for model_tag, base_model in build_models(seed):
             tag = f"{model_tag}_{feat_kind}"
-            print(f"Training {tag} with scaffold CV ({len(splits)} folds)")
+            split_label = split_mode["chosen_strategy"] if split_mode else "scaffold_cv"
+            print(f"Training {tag} with {split_label} ({len(splits)} folds)")
 
             per_fold_metrics: List[Dict[str, float]] = []
             for fold_id, (train_idx, val_idx) in enumerate(splits):
@@ -315,7 +330,7 @@ def main(config_path: str) -> None:
                 per_fold_metrics.append(metrics_fold)
 
             metrics = aggregate_cv_metrics(per_fold_metrics)
-            metrics["split_strategy"] = "scaffold_cv"
+            metrics["split_strategy"] = split_label
             metrics["cv_folds"] = len(splits)
 
             # Save metrics

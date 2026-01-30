@@ -73,9 +73,9 @@ def read_blind(path: str, smiles_col: str = "smiles", name_col: str = "name") ->
             df[name_col] = df.index.astype(str)
     df = df.dropna(subset=[smiles_col]).copy()
     if name_col not in df.columns or df[name_col].isna().all():
-        df[name_col] = df.index.astype(str)
+        df[name_col] = df.index.to_series().astype(str)
     else:
-        df[name_col] = df[name_col].fillna(df.index.astype(str))
+        df[name_col] = df[name_col].fillna(df.index.to_series().astype(str))
     # Normalize to standard downstream names
     if name_col != "name":
         df["name"] = df[name_col]
@@ -138,7 +138,7 @@ def main(config_path: str) -> None:
     ensure_dir(feat_dir)
 
     known_df = read_known(known_path, smiles_col, status_col, name_col)
-    blind_df = read_blind(blind_path)
+    blind_df = read_blind(blind_path, smiles_col=smiles_col, name_col=name_col)
 
     actives = known_df[known_df[status_col] == "active"].reset_index(drop=True)
     inactives = known_df[known_df[status_col] == "inactive"].reset_index(drop=True)

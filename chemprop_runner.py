@@ -246,9 +246,9 @@ def main(config_path: str) -> None:
         fold_dir.mkdir(parents=True, exist_ok=True)
         train_csv = tmpdir / "train_split.csv"
         val_csv = tmpdir / "val_split.csv"
-        label_col = split_y_col if split_y_col else status_col
-        prepare_csv(known_df.iloc[train_idx], smiles_col, label_col, train_csv)
-        prepare_csv(known_df.iloc[val_idx], smiles_col, label_col, val_csv)
+        # Always train Chemprop on numeric target column
+        prepare_csv(known_df.iloc[train_idx], smiles_col, "target", train_csv)
+        prepare_csv(known_df.iloc[val_idx], smiles_col, "target", val_csv)
 
         ckpt = train_fold(
             train_csv,
@@ -279,8 +279,7 @@ def main(config_path: str) -> None:
         full_dir = chemprop_dir / "full_train"
         full_dir.mkdir(parents=True, exist_ok=True)
         full_train_csv = tmpdir / "train_full.csv"
-        label_col = split_y_col if split_y_col else status_col
-        prepare_csv(known_df, smiles_col, label_col, full_train_csv)
+        prepare_csv(known_df, smiles_col, "target", full_train_csv)
 
         full_ckpts: List[Path] = []
         for i in range(ensemble_size):
@@ -300,8 +299,8 @@ def main(config_path: str) -> None:
                 "--split_type",
                 "scaffold",
                 "--split_sizes",
-                "0.9",
-                "0.1",
+                "1.0",
+                "0.0",
                 "0.0",
                 "--epochs",
                 "40",
@@ -322,13 +321,13 @@ def main(config_path: str) -> None:
             if use_rdkit_desc:
                 cmd.extend(["--features_generator", "rdkit_2d_normalized"])
             run_cmd(cmd, full_dir)
-            ckpt_path = next((full_dir / f"ensemble_{i}").glob("fold_*/*.pt"), None)
+            ckpt_path = next((full_dir / f"ensemble_{i}").rglob("*.pt"), None)
             if ckpt_path:
                 full_ckpts.append(ckpt_path)
 
         if not full_ckpts:
             # Fallback to original checkpoint if full retrain failed
-            full_ckpts = checkpoints[:ensemble_size]
+            full_ckpts = split_checkpoints[:ensemble_size]
 
         pred_df = ensemble_predict(full_ckpts, blind_csv, use_rdkit_desc, morgan_radius, morgan_bits)
         pred_df[name_col] = blind_df[name_col].values
