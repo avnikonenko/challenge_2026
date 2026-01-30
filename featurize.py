@@ -129,6 +129,24 @@ def write_split(
         return path_pkl
 
 
+def _all_feature_files_exist(base_out: str) -> bool:
+    bases = [
+        "actives_morgan",
+        "inactives_morgan",
+        "unknown_morgan",
+        "actives_descriptors",
+        "inactives_descriptors",
+        "unknown_descriptors",
+    ]
+    for b in bases:
+        parquet = os.path.join(base_out, f"{b}.parquet")
+        pkl = os.path.join(base_out, f"{b}.pkl")
+        if not (os.path.exists(parquet) or os.path.exists(pkl)):
+            return False
+    schema = os.path.join(base_out, "feature_schema.json")
+    return os.path.exists(schema)
+
+
 def main(config_path: str) -> None:
     cfg_dict: Dict = load_config(config_path)
     feat_cfg = FeaturizationConfig(**cfg_dict.get("fingerprint", {}))
@@ -142,6 +160,11 @@ def main(config_path: str) -> None:
     out_dir = cfg_dict.get("output_dir", "outputs")
     feat_dir = os.path.join(out_dir, "features")
     ensure_dir(feat_dir)
+
+    # Reuse precomputed features when all files are present.
+    if _all_feature_files_exist(feat_dir):
+        print(f"[featurize] Existing feature files detected in {feat_dir}; reusing them.")
+        return
 
     known_df = read_known(known_path, smiles_col, status_col, name_col)
     blind_df = read_blind(blind_path, smiles_col=smiles_col, name_col=name_col)

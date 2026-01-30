@@ -84,7 +84,7 @@ def train_fold(
         "--metric",
         "prc-auc",
         "--extra_metrics",
-        "roc-auc",
+        "auc",
         "--split_type",
         "scaffold",
         "--epochs",
