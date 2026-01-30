@@ -185,10 +185,7 @@ def main(config_path: str) -> None:
                 weight *= max(0.85, 2 - ood_pref_factor)  # light penalty
         model_weights[model_name] = max(weight, 1e-6)
 
-    # Include similarity ranking if present
-    if sim_file.exists():
-        frames.append(load_prediction_file(sim_file, model_name="similarity", params="tanimoto_topk"))
-        model_weights.setdefault("similarity", weight_fallback)
+    # Similarity ranking intentionally excluded from consensus per request
 
     if not frames:
         raise RuntimeError("No prediction files found to build consensus.")
