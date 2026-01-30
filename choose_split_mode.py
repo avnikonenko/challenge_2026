@@ -41,7 +41,7 @@ def main():
         "test_size": args.test_size,
         "repeats": args.repeats,
         "random_state_base": args.random_state_base,
-        "cluster_thresholds": [0.70, 0.60],
+        "cluster_thresholds": [0.70, 0.50],
         "radius": 2,
         "n_bits": 2048,
     }
