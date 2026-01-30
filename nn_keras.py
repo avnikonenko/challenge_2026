@@ -10,6 +10,9 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 
+# Force CPU if CUDA toolchain is not fully available; override by exporting CUDA_VISIBLE_DEVICES before run.
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
+
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization

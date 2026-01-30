@@ -130,15 +130,17 @@ def write_split(
 
 
 def _all_feature_files_exist(base_out: str) -> bool:
-    bases = [
+    """Check if required feature artifacts already exist.
+
+    We only require the Morgan feature files (actives/inactives/unknown) and the schema.
+    Descriptor files are optional; if missing we still reuse to avoid needless recompute.
+    """
+    morgan_bases = [
         "actives_morgan",
         "inactives_morgan",
         "unknown_morgan",
-        "actives_descriptors",
-        "inactives_descriptors",
-        "unknown_descriptors",
     ]
-    for b in bases:
+    for b in morgan_bases:
         parquet = os.path.join(base_out, f"{b}.parquet")
         pkl = os.path.join(base_out, f"{b}.pkl")
         if not (os.path.exists(parquet) or os.path.exists(pkl)):
