@@ -1,6 +1,6 @@
 {
-  "known_path": "data/known_compounds.csv",
-  "blind_path": "data/blind_set.smi",
+  "known_path": "data/chembl_stereo_classes_fixed.smi",
+  "blind_path": "data/blind_stereo.smi",
   "output_dir": "outputs",
   "smiles_col": "smiles",
   "status_col": "act",
