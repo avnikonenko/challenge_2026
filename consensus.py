@@ -191,6 +191,7 @@ def main(config_path: str) -> None:
         raise RuntimeError("No prediction files found to build consensus.")
 
     all_preds = pd.concat(frames, ignore_index=True)
+    used_models = sorted(model_weights.keys())
     all_preds = add_scaffolds(all_preds)
 
     all_path = cons_dir / "all_model_rankings.csv"
@@ -201,6 +202,7 @@ def main(config_path: str) -> None:
     ecr_path = cons_dir / "ecr_consensus.csv"
     ecr_df.to_csv(ecr_path, index=False)
     print(f"[consensus] Wrote ECR consensus -> {ecr_path}")
+    print(f"[consensus] Models included: {', '.join(used_models)}")
 
 
 if __name__ == "__main__":

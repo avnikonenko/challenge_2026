@@ -276,7 +276,7 @@ def main(config_path: str) -> None:
     eval_topk = cfg.get("eval_topk", [20, 100])
     bedroc_alpha = cfg.get("bedroc_alpha", 20.0)
 
-    feature_sets = ["morgan", "descriptors"]
+    feature_sets = ["morgan"]
     # load original known data for ordering
     known_path = cfg["known_path"]
     smiles_col = cfg.get("smiles_col", "smiles")
@@ -327,13 +327,22 @@ def main(config_path: str) -> None:
             allow_lgbm=not _skip_flags["lgbm"],
             allow_hgb=not _skip_flags["hgb"],
         )
-        if not models_to_run:
-            raise ValueError("All models were skipped. Enable at least one model to train.")
+        # Auto-skip models whose predictions already exist
+        filtered_models = []
+        for model_tag, base_model in models_to_run:
+            pred_path = os.path.join(pred_dir, f"{model_tag}_{feat_kind}_blind_ranked.csv")
+            if os.path.exists(pred_path):
+                print(f"[train_models] Found existing predictions for {model_tag}_{feat_kind}, skipping training.")
+            else:
+                filtered_models.append((model_tag, base_model))
 
-        model_names = [m[0] for m in models_to_run]
+        if not filtered_models:
+            raise ValueError("All models were skipped (either by flags or existing predictions). Enable or delete outputs to rerun.")
+
+        model_names = [m[0] for m in filtered_models]
         print(f"Models to run on {feat_kind}: {', '.join(model_names)}")
 
-        for model_tag, base_model in models_to_run:
+        for model_tag, base_model in filtered_models:
             tag = f"{model_tag}_{feat_kind}"
             split_label = split_mode["chosen_strategy"] if split_mode else "scaffold_cv"
             print(f"Training {tag} with {split_label} ({len(splits)} folds)")
