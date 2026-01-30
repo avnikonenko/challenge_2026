@@ -70,7 +70,7 @@ def train_fold(
     use_rdkit_desc: bool,
     morgan_radius: int,
     morgan_bits: int,
-    lr: float,
+    init_lr: float,
     class_balance: bool,
 ) -> Path:
     cmd = [
@@ -100,12 +100,8 @@ def train_fold(
         "--quiet",
         "--features_generator",
         "morgan",
-        "--morgan_radius",
-        str(morgan_radius),
-        "--morgan_num_bits",
-        str(morgan_bits),
-        "--lr",
-        str(lr),
+        "--init_lr",
+        str(init_lr),
     ]
     if class_balance:
         cmd.append("--class_balance")
@@ -350,11 +346,7 @@ def main(config_path: str) -> None:
                 "--quiet",
                 "--features_generator",
                 "morgan",
-                "--morgan_radius",
-                str(morgan_radius),
-                "--morgan_num_bits",
-                str(morgan_bits),
-                "--lr",
+                "--init_lr",
                 str(chemprop_lr),
             ]
             if use_rdkit_desc:
