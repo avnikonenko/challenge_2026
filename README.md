@@ -102,3 +102,11 @@ Outputs to review:
 - Probabilities are calibrated (isotonic or Platt) before ranking.
 - Early-enrichment focus: precision@k, EF1%, BEDROC.
 - Adjust fingerprint radius/bits, top-k settings, and seeds in `config.json`. Chemprop uses binary Morgan (`chemprop_morgan_radius`, `chemprop_morgan_bits`) and can append RDKit 2D descriptors when `chemprop_use_rdkit_desc` is true. Consensus knobs: `consensus_tau` (decay), `consensus_focus_k` (only ranks up to this count), `consensus_metric` (weighting metric, e.g., precision@100 or pr_auc), `consensus_weight_fallback` (default weight if metric missing).
+
+## Choosing the final top molecules
+- **Primary (recommended):** use `outputs/consensus/ecr_consensus.csv` and export with a small scaffold cap to keep diversity, e.g.  
+  `python select_top_compounds.py --rank_file outputs/consensus/ecr_consensus.csv --top_k 100 --scaffold_cap 2 --suffix final`
+- **Similarity-heavy regime:** if blind is very close to training chemistry, you may rely more on `outputs/similarity/blind_similarity_ranked.csv` or blend it into ECR (already included when present).
+- **Model-specific picks:** any `outputs/predictions/*_blind_ranked.csv`; in novel chemistry favor calibrated models (`rf`, `lgbm`, `hgb`) and chemprop ensemble.
+- **Robustness check:** compare rankings derived from Murcko split metrics vs cluster_t0.60 metrics (when available); prioritize molecules consistently high in both.
+- **Time-constrained:** if you skip Chemprop/Keras, use tree-model ECR + similarity, still apply scaffold cap when exporting.
