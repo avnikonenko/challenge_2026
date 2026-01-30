@@ -1,0 +1,27 @@
+{
+  "known_path": "data/known_compounds.csv",
+  "blind_path": "data/blind_set.smi",
+  "output_dir": "outputs",
+  "smiles_col": "smiles",
+  "status_col": "status",
+  "name_col": "name",
+  "fingerprint": {
+    "radius": 2,
+    "n_bits": 2048,
+    "use_chirality": true
+  },
+  "top_k": [5, 10, 20],
+  "eval_topk": [20, 100],
+  "random_seed": 42,
+  "bedroc_alpha": 20.0,
+  "cv_folds": 5,
+  "chemprop_use_rdkit_desc": false,
+  "chemprop_ensemble": 5,
+  "chemprop_morgan_radius": 2,
+  "chemprop_morgan_bits": 2048,
+  "consensus_tau": 25.0,
+  "consensus_focus_k": 100,
+  "consensus_metric": "precision@100",
+  "consensus_weight_fallback": 1.0,
+  "split_mode_json": "split_mode.json"
+}
