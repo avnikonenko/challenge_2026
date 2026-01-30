@@ -26,6 +26,10 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--chemprop", action="store_true", help="run chemprop models")
     parser.add_argument("--keras", action="store_true", help="run keras dense model")
+    parser.add_argument("--skip-rf", action="store_true", help="Skip RandomForest model (train_models.py).")
+    parser.add_argument("--skip-xgb", action="store_true", help="Skip XGBoost model (train_models.py).")
+    parser.add_argument("--skip-lgbm", action="store_true", help="Skip LightGBM model (train_models.py).")
+    parser.add_argument("--skip-hgb", action="store_true", help="Skip HistGradientBoosting model (train_models.py).")
     args = parser.parse_args()
 
     cwd = Path(__file__).resolve().parent
@@ -46,7 +50,17 @@ def main():
     # Run pipeline steps with enforced config
     run_cmd([ "python", "featurize.py", "--config", str(tmp_config)], cwd)
     run_cmd([ "python", "similarity_rank.py", "--config", str(tmp_config)], cwd)
-    run_cmd([ "python", "train_models.py", "--config", str(tmp_config)], cwd)
+
+    train_cmd = ["python", "train_models.py", "--config", str(tmp_config)]
+    if args.skip_rf:
+        train_cmd.append("--skip-rf")
+    if args.skip_xgb:
+        train_cmd.append("--skip-xgb")
+    if args.skip_lgbm:
+        train_cmd.append("--skip-lgbm")
+    if args.skip_hgb:
+        train_cmd.append("--skip-hgb")
+    run_cmd(train_cmd, cwd)
     if args.chemprop:
         run_cmd([ "python", "chemprop_runner.py", "--config", str(tmp_config)], cwd)
     if args.keras:

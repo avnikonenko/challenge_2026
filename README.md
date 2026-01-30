@@ -34,6 +34,8 @@ Metrics summary aggregation runs by default; skip with `--skip-metrics-summary`.
 - Metrics summary: `python metrics_summary.py --config config.json`
 - Export final top IDs (no header, one per line; optional scaffold cap for diversity):  
   `python select_top_compounds.py --rank_file outputs/consensus/ecr_consensus.csv --suffix run1 --top_k 100 --scaffold_cap 2`
+- Full pipeline (Stage 2) with skip flags forwarded:  
+  `python run_pipeline.py --train_csv TRAIN.smi --blind_csv BLIND.smi --split_mode_json split_mode.json --chemprop --keras --output_dir outputs_run --skip-lgbm`
 - Split choice (Stage 1): `python choose_split_mode.py --train_csv TRAIN.csv --blind_csv BLIND.csv --out_json split_mode.json --smiles_col smiles`
 - Stage 2 runner enforcing the chosen split:  
   `python run_pipeline.py --train_csv TRAIN.csv --blind_csv BLIND.csv --split_mode_json split_mode.json [--chemprop] [--keras]`
