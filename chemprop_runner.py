@@ -42,7 +42,24 @@ def _numpy_patch_dir() -> Path:
         "if not hasattr(np, 'VisibleDeprecationWarning'):\n"
         "    class VisibleDeprecationWarning(UserWarning):\n"
         "        pass\n"
-        "    np.VisibleDeprecationWarning = VisibleDeprecationWarning\n",
+        "    np.VisibleDeprecationWarning = VisibleDeprecationWarning\n"
+        "import os, argparse\n"
+        "try:\n"
+        "    import torch\n"
+        "    try:\n"
+        "        torch.serialization.add_safe_globals([argparse.Namespace])\n"
+        "    except Exception:\n"
+        "        pass\n"
+        "    _orig_load = torch.load\n"
+        "    def _load_with_weights_only_false(*args, **kwargs):\n"
+        "        if 'weights_only' not in kwargs:\n"
+        "            kwargs['weights_only'] = False\n"
+        "        return _orig_load(*args, **kwargs)\n"
+        "    torch.load = _load_with_weights_only_false\n"
+        "except Exception:\n"
+        "    pass\n"
+        "os.environ.setdefault('TORCH_LOAD_WEIGHTS_ONLY', '0')\n"
+        "os.environ.setdefault('PYTORCH_WEIGHTS_ONLY', '0')\n",
         encoding="utf-8",
     )
     return tmpdir
@@ -145,10 +162,6 @@ def predict(
         "--quiet",
         "--features_generator",
         "morgan",
-        "--morgan_radius",
-        str(morgan_radius),
-        "--morgan_num_bits",
-        str(morgan_bits),
     ]
     if use_rdkit_desc:
         cmd.extend(["--features_generator", "rdkit_2d_normalized"])
@@ -306,7 +319,7 @@ def main(config_path: str) -> None:
         split_checkpoints.append(ckpt)
 
         pred_csv = tmpdir / "valpred_split.csv"
-        predict(ckpt, val_csv, pred_csv, use_rdkit_desc, morgan_radius, morgan_bits)
+        predict(ckpt, val_csv, pred_csv, use_rdkit_desc, morgan_radius, morgan_bits, chemprop_use_cuda)
         preds = pd.read_csv(pred_csv)
         metrics = evaluate_fold(preds, known_df.iloc[val_idx]["target"], eval_topk, bedroc_alpha)
         metrics["split_strategy"] = split_mode["chosen_strategy"] if split_mode else "random_stratified"
