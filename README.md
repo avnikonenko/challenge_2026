@@ -119,3 +119,11 @@ Outputs to review:
 - **Model-specific picks:** any `outputs/predictions/*_blind_ranked.csv`; in novel chemistry favor calibrated models (`rf`, `lgbm`, `hgb`) and chemprop ensemble.
 - **Robustness check:** compare rankings derived from Murcko split metrics vs cluster_t0.60 metrics (when available); prioritize molecules consistently high in both.
 - **Time-constrained:** if you skip Chemprop/Keras, use tree-model ECR + similarity, still apply scaffold cap when exporting.
+
+## Consensus Rankings
+Optional post-processing after Stage 2 predictions:
+
+- consensus_active.py: votes molecules that appear in the top-N (default 200) of each `outputs/predictions/*_blind_ranked.csv`, ranks by votes/mean score/mean rank, and writes `outputs/consensus/consensus_active.csv` (top-K default 100).
+- diversity_pick.py: clusters the top scored pool (default 500) with Morgan/Butina, applies a per-cluster cap tuned to train→blind similarity, and outputs a diversified `outputs/consensus/diverse_top100.csv`.
+
+Run these only if needed; the main pipeline defaults (`outputs/predictions/*_blind_ranked.csv` and `outputs/consensus/ecr_consensus.csv`) remain your standard pick lists.

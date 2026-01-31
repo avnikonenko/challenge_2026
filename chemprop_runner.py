@@ -167,6 +167,7 @@ def predict(
         cmd.extend(["--features_generator", "rdkit_2d_normalized"])
     if not use_cuda:
         cmd.append("--no_cuda")
+    out_csv.parent.mkdir(parents=True, exist_ok=True)
     run_cmd(cmd, Path.cwd(), use_cuda=use_cuda)
 
 
@@ -213,10 +214,11 @@ def ensemble_predict(
     morgan_radius: int,
     morgan_bits: int,
     use_cuda: bool,
+    tmp_preds_dir: Path,
 ) -> pd.DataFrame:
     all_preds = []
     for ckpt in checkpoints:
-        tmp_path = blind_csv.parent / f"pred_{ckpt.stem}.csv"
+        tmp_path = tmp_preds_dir / f"pred_{ckpt.stem}.csv"
         predict(ckpt, blind_csv, tmp_path, use_rdkit_desc, morgan_radius, morgan_bits, use_cuda)
         df = pd.read_csv(tmp_path)
         # pick prediction column
@@ -253,7 +255,8 @@ def main(config_path: str) -> None:
     chemprop_dir = out_dir / "chemprop"
     preds_dir = out_dir / "predictions"
     metrics_dir = out_dir / "metrics"
-    for d in [chemprop_dir, preds_dir, metrics_dir]:
+    tmp_preds_dir = chemprop_dir / "tmp_preds"
+    for d in [chemprop_dir, preds_dir, metrics_dir, tmp_preds_dir]:
         d.mkdir(parents=True, exist_ok=True)
 
     use_rdkit_desc = cfg.get("chemprop_use_rdkit_desc", False)
@@ -347,19 +350,19 @@ def main(config_path: str) -> None:
             )
             split_checkpoints.append(ckpt)
 
-            pred_csv = tmpdir / "valpred_split.csv"
-            predict(ckpt, val_csv, pred_csv, use_rdkit_desc, morgan_radius, morgan_bits, chemprop_use_cuda)
-            preds = pd.read_csv(pred_csv)
-            metrics = evaluate_fold(preds, known_df.iloc[val_idx]["target"], eval_topk, bedroc_alpha)
-            metrics["split_strategy"] = split_mode["chosen_strategy"] if split_mode else "random_stratified"
-            fold_metrics.append(metrics)
+        pred_csv = tmp_preds_dir / "valpred_split.csv"
+        predict(ckpt, val_csv, pred_csv, use_rdkit_desc, morgan_radius, morgan_bits, chemprop_use_cuda)
+        preds = pd.read_csv(pred_csv)
+        metrics = evaluate_fold(preds, known_df.iloc[val_idx]["target"], eval_topk, bedroc_alpha)
+        metrics["split_strategy"] = split_mode["chosen_strategy"] if split_mode else "random_stratified"
+        fold_metrics.append(metrics)
 
-            metrics_df = pd.DataFrame(fold_metrics)
-            mean_metrics = metrics_df.mean(numeric_only=True).to_dict()
-            metrics_path = metrics_dir / "chemprop_cv.json"
-            with open(metrics_path, "w", encoding="utf-8") as f:
-                json.dump(mean_metrics, f, indent=2)
-            print(f"[chemprop] Split metrics -> {metrics_path}")
+        metrics_df = pd.DataFrame(fold_metrics)
+        mean_metrics = metrics_df.mean(numeric_only=True).to_dict()
+        metrics_path = metrics_dir / "chemprop_cv.json"
+        with open(metrics_path, "w", encoding="utf-8") as f:
+            json.dump(mean_metrics, f, indent=2)
+        print(f"[chemprop] Split metrics -> {metrics_path}")
 
         # Retrain ensemble on full labeled data for final scoring
         full_ckpts: List[Path] = []
@@ -424,7 +427,9 @@ def main(config_path: str) -> None:
             # Fallback to original checkpoint if full retrain failed
             full_ckpts = split_checkpoints[:ensemble_size]
 
-        pred_df = ensemble_predict(full_ckpts, blind_csv, use_rdkit_desc, morgan_radius, morgan_bits, chemprop_use_cuda)
+        pred_df = ensemble_predict(
+            full_ckpts, blind_csv, use_rdkit_desc, morgan_radius, morgan_bits, chemprop_use_cuda, tmp_preds_dir
+        )
         pred_df[name_col] = blind_df[name_col].values
         pred_df = pred_df.sort_values(by="score", ascending=False).reset_index(drop=True)
         pred_df.insert(0, "rank", pred_df.index + 1)
