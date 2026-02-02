@@ -215,12 +215,18 @@ def main():
     known_df = known_df.rename(columns={name_col: "name", smiles_col: "smiles"})
 
     if blind_path.endswith(".smi"):
-        blind_df = pd.read_csv(blind_path, sep="\t", header=None, names=["smiles", "name"])
+        blind_df = pd.read_csv(blind_path, sep="\t", header=None, names=[smiles_col, name_col])
     else:
         sep_blind = "\t" if blind_path.endswith(".tsv") else ","
         blind_df = pd.read_csv(blind_path, sep=sep_blind)
-    if blind_df["name"].isna().all():
-        blind_df["name"] = blind_df.index.astype(str)
+    # Gracefully handle missing columns in OOD blind sets.
+    if smiles_col not in blind_df.columns:
+        raise ValueError(f"Missing required column '{smiles_col}' in blind set.")
+    blind_df = blind_df.copy()
+    blind_df[name_col] = blind_df[name_col] if name_col in blind_df.columns else blind_df.index.astype(str)
+    blind_df[name_col] = blind_df[name_col].fillna(blind_df.index.astype(str))
+    # Normalize to standard downstream names without dropping originals.
+    blind_df = blind_df.rename(columns={name_col: "name", smiles_col: "smiles"})
 
     if split_mode:
         print(f"[keras] Using split strategy: {split_mode['chosen_strategy']}")

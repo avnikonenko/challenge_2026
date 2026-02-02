@@ -286,12 +286,21 @@ def main(config_path: str) -> None:
     known_df["target"] = (known_df[status_col] == "active").astype(int)
 
     if blind_path.endswith(".smi"):
-        blind_df = pd.read_csv(blind_path, sep="\t", header=None, names=["smiles", name_col])
+        blind_df = pd.read_csv(blind_path, sep="\t", header=None, names=[smiles_col, name_col])
     else:
         sep_blind = "\t" if blind_path.endswith(".tsv") else ","
         blind_df = pd.read_csv(blind_path, sep=sep_blind)
-    if blind_df[name_col].isna().all():
-        blind_df[name_col] = blind_df.index.astype(str)
+
+    # Ensure required columns exist and are filled; tolerate missing name column for OOD sets.
+    if smiles_col not in blind_df.columns:
+        raise ValueError(f"Missing required column '{smiles_col}' in blind set.")
+    blind_df = blind_df.copy()
+    blind_df[name_col] = blind_df[name_col] if name_col in blind_df.columns else blind_df.index.astype(str)
+    blind_df[name_col] = blind_df[name_col].fillna(blind_df.index.astype(str))
+    # Normalize/alias columns so downstream consensus always has 'name' + 'smiles'.
+    blind_df["smiles"] = blind_df[smiles_col]
+    if "name" not in blind_df.columns:
+        blind_df["name"] = blind_df[name_col]
 
     if split_mode:
         print(f"[chemprop] Using split strategy: {split_mode['chosen_strategy']}")
@@ -431,6 +440,7 @@ def main(config_path: str) -> None:
             full_ckpts, blind_csv, use_rdkit_desc, morgan_radius, morgan_bits, chemprop_use_cuda, tmp_preds_dir
         )
         pred_df[name_col] = blind_df[name_col].values
+        pred_df["name"] = blind_df["name"].values
         pred_df = pred_df.sort_values(by="score", ascending=False).reset_index(drop=True)
         pred_df.insert(0, "rank", pred_df.index + 1)
         out_pred_path = preds_dir / "chemprop_blind_ranked.csv"

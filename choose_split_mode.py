@@ -41,7 +41,7 @@ def main():
         "test_size": args.test_size,
         "repeats": args.repeats,
         "random_state_base": args.random_state_base,
-        "cluster_thresholds": [0.70, 0.50],
+        "cluster_thresholds": [0.70, 0.60],
         "radius": 2,
         "n_bits": 2048,
     }
@@ -49,7 +49,7 @@ def main():
     chosen, report = choose_split_strategy(train_df, blind_df, config)
 
     # Secondary evaluation with cluster_group_t0.60 for robustness (kept alongside primary)
-    secondary_strategy = "cluster_group_t0.50"
+    secondary_strategy = "cluster_group_t0.60"
     report["secondary_strategy"] = secondary_strategy
 
     # Print diagnostics

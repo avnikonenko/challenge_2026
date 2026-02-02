@@ -179,7 +179,7 @@ def _group_stratified_split(groups: np.ndarray, y: np.ndarray, test_size: float,
 
 def _summarize_shift(sim_vals: np.ndarray) -> Dict:
     if len(sim_vals) == 0:
-        return {k: 0.0 for k in ["q10", "q50", "q90", "p_ge_0.7", "p_ge_0.6", "p_ge_0.5"]}
+        return {k: 0.0 for k in ["q10", "q50", "q60", "q90", "p_ge_0.7", "p_ge_0.6", "p_ge_0.5"]}
     return {
         "q10": float(np.quantile(sim_vals, 0.10)),
         "q50": float(np.quantile(sim_vals, 0.50)),
@@ -198,7 +198,7 @@ def choose_split_strategy(train_df: pd.DataFrame, blind_df: pd.DataFrame, config
     smiles_col = config.get("smiles_col", "smiles")
     radius = int(config.get("radius", 2))
     n_bits = int(config.get("n_bits", 2048))
-    cluster_thresholds = config.get("cluster_thresholds", [0.70, 0.50])
+    cluster_thresholds = config.get("cluster_thresholds", [0.70, 0.6, 0.50])
 
     mode, smiles_col = get_feature_mode(train_df, config)
     if mode != "smiles":
