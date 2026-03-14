@@ -1,6 +1,8 @@
 # 9th Advanced Drug Design workshop challenge - Olomouc 2026
 ## DYRK1B Virtual Screening Challenge
 ## Virtual Screening Pipeline
+
+Info: https://shiny.imtm.cz/apps/polishp/9add/
  
 
 Pipeline to pick the top ~100 actives from a blind set (~3000 compounds) using similarity and ML models on Morgan fingerprints and 2D descriptors. Includes scaffold-split CV and early-enrichment metrics.
